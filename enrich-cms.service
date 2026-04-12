@@ -1,0 +1,34 @@
+[Unit]
+Description=EnrichCo CMS for Salon Websites
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=aisquad
+Group=aisquad
+WorkingDirectory=/opt/enrich-cms
+EnvironmentFile=/opt/enrich-cms/.env.production
+ExecStart=/usr/bin/node /opt/enrich-cms/out/server.js
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/enrich-cms /var/www
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelTunables=yes
+RemoveIPC=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+SystemCallFilter=@system-service
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

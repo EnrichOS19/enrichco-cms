@@ -1,0 +1,112 @@
+/**
+ * Audit Trail — Phase 3B
+ *
+ * Append-only SQLite log of every save, publish, upload, rollback, and restore.
+ * Never deletes records. Admin-queryable via /admin/audit.
+ */
+
+import Database from "better-sqlite3";
+import path from "path";
+import fs from "fs";
+import crypto from "crypto";
+
+const DB_PATH =
+  process.env.CMS_DB_PATH ||
+  path.join(process.cwd(), "data", "cms.sqlite");
+
+const dbDir = path.dirname(DB_PATH);
+if (!fs.existsSync(dbDir)) {
+  fs.mkdirSync(dbDir, { recursive: true });
+}
+
+let _db: Database.Database | null = null;
+
+function getDb(): Database.Database {
+  if (_db && (DB_PATH === (_db as any).__path)) return _db;
+
+  const db = new Database(DB_PATH);
+  (db as any).__path = DB_PATH;
+  db.pragma("journal_mode = WAL");
+  db.pragma("foreign_keys = ON");
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS audit_log (
+      id           TEXT PRIMARY KEY,
+      timestamp    INTEGER NOT NULL,
+      email        TEXT NOT NULL,
+      action       TEXT NOT NULL,
+      slug         TEXT NOT NULL,
+      diff         TEXT,
+      deploy_hash  TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_audit_slug ON audit_log(slug);
+    CREATE INDEX IF NOT EXISTS idx_audit_ts   ON audit_log(timestamp);
+  `);
+
+  _db = db;
+  return db;
+}
+
+export type AuditAction = "save" | "publish" | "upload" | "rollback" | "restore" | "template_switch";
+
+export interface AuditEntry {
+  id: string;
+  timestamp: number;
+  email: string;
+  action: AuditAction;
+  slug: string;
+  diff?: string;
+  deploy_hash?: string;
+}
+
+export interface LogEventParams {
+  email: string;
+  action: AuditAction;
+  slug: string;
+  diff?: string;
+  deploy_hash?: string;
+}
+
+/** Append an event to the audit log. */
+export function logEvent(params: LogEventParams): void {
+  const db = getDb();
+  const id = crypto.randomUUID();
+  const timestamp = Date.now();
+
+  db.prepare(`
+    INSERT INTO audit_log (id, timestamp, email, action, slug, diff, deploy_hash)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    timestamp,
+    params.email,
+    params.action,
+    params.slug,
+    params.diff ?? null,
+    params.deploy_hash ?? null
+  );
+}
+
+/** Get audit log entries for a salon, newest first. */
+export function getAuditLog(slug: string, limit = 100): AuditEntry[] {
+  const db = getDb();
+  return db.prepare(`
+    SELECT * FROM audit_log WHERE slug = ? ORDER BY timestamp DESC LIMIT ?
+  `).all(slug, limit) as AuditEntry[];
+}
+
+/** Get all audit entries (admin view), newest first. */
+export function getAllAuditLog(limit = 500): AuditEntry[] {
+  const db = getDb();
+  return db.prepare(`
+    SELECT * FROM audit_log ORDER BY timestamp DESC LIMIT ?
+  `).all(limit) as AuditEntry[];
+}
+
+/** Reset module-level DB handle (for tests that swap CMS_DB_PATH). */
+export function resetDb(): void {
+  if (_db) {
+    try { _db.close(); } catch {}
+    _db = null;
+  }
+}
