@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { COOKIE_NAME, MAX_AGE } from "@/lib/auth";
-import { createSession } from "@/lib/db";
+import { storeOtp } from "@/lib/db";
+import { sendOtpEmail } from "@/lib/otp";
+import { checkRateLimit, withRateLimitHeaders } from "@/lib/rate-limit";
+import crypto from "crypto";
 
-const IMS_AUTH_BASE =
-  process.env.NEXT_PUBLIC_IMS_AUTH_URL ?? "https://imsnext-auth.enrichco.us";
+const IMS_AUTH_BASE = process.env.IMS_AUTH_URL ?? "https://imsnext-auth.enrichco.us";
 
 interface ImsAuthResponse {
   return: boolean;
@@ -12,17 +13,54 @@ interface ImsAuthResponse {
   refreshToken: string;
 }
 
+function generateOtp(): string {
+  // 6-digit code: 000000–999999
+  return String(crypto.randomInt(0, 1_000_000)).padStart(6, "0");
+}
+
+function decodeImsRole(token: string): string {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return "support";
+    const payload = JSON.parse(
+      Buffer.from(parts[1], "base64url").toString("utf-8")
+    );
+    return (
+      payload.role ||
+      payload["http://schemas.microsoft.com/ws/2008/06/identity/claims/role"] ||
+      "support"
+    );
+  } catch {
+    return "support";
+  }
+}
+
 export async function POST(request: NextRequest) {
+  // ── Rate limit: 5 attempts per IP per 60 seconds ─────────────────────────
+  const ip =
+    request.headers.get("x-forwarded-for")?.split(",")[0].trim() ??
+    request.headers.get("x-real-ip") ??
+    "unknown";
+
+  const rl = checkRateLimit(`login:${ip}`, { limit: 5, windowSec: 60 });
+  if (!rl.allowed) {
+    const res = NextResponse.json(
+      { error: "Too many login attempts — please wait a moment" },
+      { status: 429 }
+    );
+    return withRateLimitHeaders(res, rl);
+  }
+
   const { email, password } = await request.json();
 
   if (!email || !password) {
     return NextResponse.json(
       { error: "Email and password are required" },
-      { status: 400 },
+      { status: 400 }
     );
   }
 
-  // ── Authenticate against IMS-AUTH ──
+  // ── Step 1: Authenticate against IMS-AUTH ────────────────────────────────
   let imsRes: Response;
   try {
     imsRes = await fetch(`${IMS_AUTH_BASE}/api/Authentication/login`, {
@@ -33,14 +71,14 @@ export async function POST(request: NextRequest) {
   } catch {
     return NextResponse.json(
       { error: "Unable to reach authentication server" },
-      { status: 502 },
+      { status: 502 }
     );
   }
 
   if (!imsRes.ok) {
     return NextResponse.json(
       { error: "Invalid credentials" },
-      { status: 401 },
+      { status: 401 }
     );
   }
 
@@ -49,41 +87,35 @@ export async function POST(request: NextRequest) {
   if (!imsData.return) {
     return NextResponse.json(
       { error: imsData.message || "Authentication failed" },
-      { status: 401 },
+      { status: 401 }
     );
   }
 
-  // ── Determine role from IMS token ──
-  // IMS token is a JWT — decode the payload to get the role claim
-  let role = "support";
-  try {
-    const parts = imsData.token.split(".");
-    if (parts.length === 3) {
-      const payload = JSON.parse(
-        Buffer.from(parts[1], "base64url").toString("utf-8")
-      );
-      // IMS uses 'role' or standard claim keys
-      role =
-        payload.role ||
-        payload["http://schemas.microsoft.com/ws/2008/06/identity/claims/role"] ||
-        "support";
-    }
-  } catch {
-    // Default to support if we can't decode role
-    role = "support";
+  // ── Step 2: Determine role from IMS JWT ────────────────────────────────
+  const role = decodeImsRole(imsData.token);
+  const normalizedEmail = email.toLowerCase();
+
+  // ── Step 3: Generate + store OTP ────────────────────────────────────────
+  const code = generateOtp();
+  storeOtp(normalizedEmail, code, { email: normalizedEmail, role });
+
+  // ── Step 4: Send OTP email ───────────────────────────────────────────────
+  const sent = await sendOtpEmail(normalizedEmail, code);
+
+  if (!sent.ok) {
+    // Log but don't block — user can still enter the code from console in dev
+    console.error(`[auth/login] Failed to send OTP email to ${normalizedEmail}`);
   }
 
-  // ── Create server-side session (8h, revocable) ──
-  const sessionId = createSession(email, role);
-
-  const response = NextResponse.json({ ok: true, email, role });
-  response.cookies.set(COOKIE_NAME, sessionId, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    maxAge: MAX_AGE,
-    path: "/",
-  });
-
-  return response;
+  // In console (dev) mode, include the code so testers can see it
+  return NextResponse.json(
+    {
+      step: "otp_required",
+      email: normalizedEmail,
+      ...(sent.provider === "console" && sent.code
+        ? { _debug_code: sent.code }
+        : {}),
+    },
+    { status: 200 }
+  );
 }
