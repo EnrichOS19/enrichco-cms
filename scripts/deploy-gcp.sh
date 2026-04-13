@@ -87,6 +87,7 @@ TAR_FILE="/tmp/cms-build-$(date +%s).tar.gz"
 tar -czf "$TAR_FILE" \
   out/ \
   public/ \
+  node_modules/ \
   package.json \
   package-lock.json \
   .env.production 2>/dev/null || true
@@ -136,6 +137,11 @@ fi
 # Extract
 tar -xzf "$LATEST_TAR"
 echo "✓ Extraction complete"
+
+# Rebuild native modules for Linux (server is x86_64, tarball may contain macOS arm64 binaries)
+echo "Rebuilding native modules for Linux..."
+npm ci --build-from-source 2>/dev/null || npm rebuild
+echo "✓ Native modules rebuilt for Linux"
 
 # Set permissions (must match systemd User=aisquad)
 sudo chown -R aisquad:aisquad \"$CMS_HOME\" 2>/dev/null || true

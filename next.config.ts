@@ -22,7 +22,7 @@ if (process.env.CMS_AUTH_DISABLED && process.env.NODE_ENV === "production") {
 
 const nextConfig: NextConfig = {
   output: "standalone",
-  serverExternalPackages: [],
+  serverExternalPackages: ["better-sqlite3"],
 };
 
 export default nextConfig;
