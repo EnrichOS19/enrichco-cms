@@ -15,7 +15,12 @@ export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Public paths — no auth required
-  if (pathname.startsWith("/login") || pathname.startsWith("/api/auth")) {
+  if (
+    pathname.startsWith("/login") ||
+    pathname.startsWith("/api/auth") ||
+    pathname.startsWith("/forgot-password") ||
+    pathname.startsWith("/reset-password")
+  ) {
     // Redirect logged-in users away from login page
     if (pathname === "/login") {
       const token = request.cookies.get(COOKIE_NAME)?.value;
