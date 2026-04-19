@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
-import { requireSession } from "@/lib/auth";
+import { requireSalonAccess } from "@/lib/auth";
 import { getSalonSiteDir, getSalonConfig, saveSalonConfig } from "@/lib/salons";
 
 export const runtime = "nodejs";
@@ -16,10 +16,10 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ slug: string }> }
 ) {
-  const auth = await requireSession(request);
+  const { slug } = await params;
+  const auth = await requireSalonAccess(request, slug);
   if ("response" in auth) return auth.response;
 
-  const { slug } = await params;
   const siteDir = getSalonSiteDir(slug);
   if (!siteDir) {
     return NextResponse.json({ error: "Salon not found" }, { status: 404 });
@@ -54,10 +54,10 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ slug: string }> }
 ) {
-  const auth = await requireSession(request);
+  const { slug } = await params;
+  const auth = await requireSalonAccess(request, slug);
   if ("response" in auth) return auth.response;
 
-  const { slug } = await params;
   const siteDir = getSalonSiteDir(slug);
   if (!siteDir) {
     return NextResponse.json({ error: "Salon not found" }, { status: 404 });
@@ -124,10 +124,10 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ slug: string }> }
 ) {
-  const auth = await requireSession(request);
+  const { slug } = await params;
+  const auth = await requireSalonAccess(request, slug);
   if ("response" in auth) return auth.response;
 
-  const { slug } = await params;
   const siteDir = getSalonSiteDir(slug);
   if (!siteDir) {
     return NextResponse.json({ error: "Salon not found" }, { status: 404 });

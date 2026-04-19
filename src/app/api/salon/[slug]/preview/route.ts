@@ -12,7 +12,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getSalonConfig, saveSalonConfig, getSalonSiteDir } from "@/lib/salons";
-import { requireSession } from "@/lib/auth";
+import { requireSalonAccess } from "@/lib/auth";
 import fs from "fs";
 import path from "path";
 
@@ -23,10 +23,10 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ slug: string }> }
 ) {
-  const auth = await requireSession(request);
+  const { slug } = await params;
+  const auth = await requireSalonAccess(request, slug);
   if ("response" in auth) return auth.response;
 
-  const { slug } = await params;
   const salonResult = getSalonConfig(slug);
   if (!salonResult) {
     return NextResponse.json({ error: "Salon not found" }, { status: 404 });
@@ -85,6 +85,9 @@ export async function GET(
   { params }: { params: Promise<{ slug: string }> }
 ) {
   const { slug } = await params;
+  const auth = await requireSalonAccess(request, slug);
+  if ("response" in auth) return auth.response;
+
   const siteDir = getSalonSiteDir(slug);
 
   if (!siteDir) {
