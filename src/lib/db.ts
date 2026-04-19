@@ -80,6 +80,16 @@ function getDb(): Database.Database {
       last_login INTEGER NOT NULL,
       active     INTEGER NOT NULL DEFAULT 1
     );
+
+    CREATE TABLE IF NOT EXISTS users_salons (
+      user_email TEXT NOT NULL,
+      slug       TEXT NOT NULL,
+      granted_by TEXT NOT NULL,
+      granted_at INTEGER NOT NULL,
+      PRIMARY KEY (user_email, slug)
+    );
+    CREATE INDEX IF NOT EXISTS idx_users_salons_email ON users_salons(user_email);
+    CREATE INDEX IF NOT EXISTS idx_users_salons_slug  ON users_salons(slug);
   `);
 
   // Cleanup expired data on first connection
@@ -357,7 +367,12 @@ export function getOtpPayload(email: string): ImsPayload | null {
 
 const SUPER_ADMIN_EMAIL = (process.env.CMS_SUPER_ADMIN_EMAIL || "sean.nguyen@enrichco.us").toLowerCase();
 
-export type UserRole = "superadmin" | "admin" | "support";
+export type UserRole = "superadmin" | "admin" | "support" | "salon_owner";
+
+/** True if the role has unrestricted access to all salons. */
+export function isStaffRole(role: UserRole): boolean {
+  return role === "superadmin" || role === "admin" || role === "support";
+}
 
 export interface DbUser {
   email: string;
@@ -425,6 +440,58 @@ export function reactivateUser(email: string): boolean {
   const db = getDb();
   const result = db.prepare(`UPDATE users SET active = 1 WHERE email = ?`).run(email.toLowerCase());
   return result.changes > 0;
+}
+
+// ─── Users × Salons (per-salon access scoping for salon_owner role) ────────
+
+/** Grant a user access to a specific salon slug. Idempotent (PK on email+slug). */
+export function grantSalonAccess(email: string, slug: string, grantedBy: string): boolean {
+  const db = getDb();
+  const now = Math.floor(Date.now() / 1000);
+  try {
+    db.prepare(
+      `INSERT OR IGNORE INTO users_salons (user_email, slug, granted_by, granted_at) VALUES (?, ?, ?, ?)`
+    ).run(email.toLowerCase(), slug, grantedBy.toLowerCase(), now);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Revoke a user's access to a specific salon slug. */
+export function revokeSalonAccess(email: string, slug: string): boolean {
+  const db = getDb();
+  const result = db.prepare(
+    `DELETE FROM users_salons WHERE user_email = ? AND slug = ?`
+  ).run(email.toLowerCase(), slug);
+  return result.changes > 0;
+}
+
+/** List every slug a user has explicit access to. Empty for staff roles —
+ *  staff bypass this table entirely via isStaffRole(). */
+export function listSalonsForUser(email: string): string[] {
+  const db = getDb();
+  const rows = db.prepare(
+    `SELECT slug FROM users_salons WHERE user_email = ? ORDER BY slug`
+  ).all(email.toLowerCase()) as { slug: string }[];
+  return rows.map((r) => r.slug);
+}
+
+/** List every user with access to a specific slug (admin view). */
+export function listUsersForSalon(slug: string): Array<{ email: string; granted_by: string; granted_at: number }> {
+  const db = getDb();
+  return db.prepare(
+    `SELECT user_email AS email, granted_by, granted_at FROM users_salons WHERE slug = ? ORDER BY granted_at ASC`
+  ).all(slug) as Array<{ email: string; granted_by: string; granted_at: number }>;
+}
+
+/** Returns true if the user is explicitly granted access to this slug. */
+export function userHasSalonAccess(email: string, slug: string): boolean {
+  const db = getDb();
+  const row = db.prepare(
+    `SELECT 1 FROM users_salons WHERE user_email = ? AND slug = ? LIMIT 1`
+  ).get(email.toLowerCase(), slug);
+  return row !== undefined;
 }
 
 /** Check if an email is the super admin. */

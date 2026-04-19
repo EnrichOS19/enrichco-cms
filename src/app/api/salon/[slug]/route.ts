@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { configEtag, getSalonConfig, saveSalonConfig } from "@/lib/salons";
 import { flattenZodErrors, salonSchema } from "@/lib/schemas/salon";
-import { requireSession } from "@/lib/auth";
+import { requireSalonAccess } from "@/lib/auth";
 import { logEvent } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
@@ -10,10 +10,10 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ slug: string }> }
 ) {
-  const auth = await requireSession(request);
+  const { slug } = await params;
+  const auth = await requireSalonAccess(request, slug);
   if ("response" in auth) return auth.response;
 
-  const { slug } = await params;
   const result = getSalonConfig(slug);
   if (!result) {
     return NextResponse.json({ error: "Salon not found" }, { status: 404 });
@@ -28,11 +28,10 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ slug: string }> }
 ) {
-  const auth = await requireSession(request);
+  const { slug } = await params;
+  const auth = await requireSalonAccess(request, slug);
   if ("response" in auth) return auth.response;
   const { session } = auth;
-
-  const { slug } = await params;
 
   // Parse body safely
   let config: unknown;

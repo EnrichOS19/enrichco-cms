@@ -8,7 +8,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getSalonConfig, getSalonSiteDir } from "@/lib/salons";
-import { requireSession } from "@/lib/auth";
+import { requireSalonAccess } from "@/lib/auth";
+import { isStaffRole, type UserRole } from "@/lib/db";
 import { logEvent } from "@/lib/audit";
 import { buildAndDeploy, publishLocks } from "@/lib/publish";
 
@@ -19,11 +20,11 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ slug: string }> }
 ) {
-  const auth = await requireSession(request);
+  const { slug } = await params;
+  const auth = await requireSalonAccess(request, slug);
   if ("response" in auth) return auth.response;
   const { session } = auth;
 
-  const { slug } = await params;
   const siteDir = getSalonSiteDir(slug);
   if (!siteDir) {
     return NextResponse.json({ error: "Salon site directory not found" }, { status: 404 });
@@ -35,6 +36,19 @@ export async function POST(
 
   const targetOverride = request.nextUrl.searchParams.get("target");
   const isProduction = targetOverride === "staging" ? false : siteStatus === "production";
+
+  // Salon owners can publish to staging only. Promoting to production
+  // requires a staff (admin/superadmin/support) role — protects live
+  // customer-facing domains from owner-side mistakes or compromised accounts.
+  if (isProduction && !isStaffRole(session.role as UserRole)) {
+    return NextResponse.json(
+      {
+        error:
+          "Forbidden — only staff can publish to production. Publish to staging first and ask an admin to promote.",
+      },
+      { status: 403 }
+    );
+  }
 
   const domain = isProduction ? config?.domain : config?.stagingDomain;
   if (!domain) {

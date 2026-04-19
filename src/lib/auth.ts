@@ -12,7 +12,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { getSession, type DbSession } from "./db";
+import { getSession, isStaffRole, userHasSalonAccess, type DbSession, type UserRole } from "./db";
 
 export const COOKIE_NAME = "cms-session";
 export const MAX_AGE = 8 * 60 * 60; // 8 hours (matches SESSION_TTL_SECONDS in db.ts)
@@ -130,4 +130,47 @@ export async function requireSuperAdmin(
     };
   }
   return auth;
+}
+
+/**
+ * requireSalonAccess — use on any route that edits a specific salon.
+ *
+ * - Staff roles (superadmin, admin, support) pass through — they have access
+ *   to all salons by policy.
+ * - "salon_owner" must have an explicit grant in the users_salons table for
+ *   this slug, otherwise 403.
+ * - Unrecognized roles are 403.
+ *
+ * Usage:
+ *   const auth = await requireSalonAccess(request, slug);
+ *   if ('response' in auth) return auth.response;
+ *   const { session } = auth;
+ */
+export async function requireSalonAccess(
+  request: NextRequest,
+  slug: string
+): Promise<{ session: Session } | { response: NextResponse }> {
+  const sessionCheck = await requireSession(request);
+  if ("response" in sessionCheck) return sessionCheck;
+  const { session } = sessionCheck;
+
+  const role = session.role as UserRole;
+  if (isStaffRole(role)) return { session };
+
+  if (role === "salon_owner") {
+    if (userHasSalonAccess(session.email, slug)) return { session };
+    return {
+      response: NextResponse.json(
+        { error: "Forbidden — you do not have access to this salon" },
+        { status: 403 }
+      ),
+    };
+  }
+
+  return {
+    response: NextResponse.json(
+      { error: "Forbidden — your role cannot edit salons" },
+      { status: 403 }
+    ),
+  };
 }
