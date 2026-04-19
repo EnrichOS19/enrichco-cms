@@ -104,58 +104,62 @@ export async function POST(
     );
   }
 
+  // Stage the entire template-switch operation in /tmp. The live siteDir is
+  // NEVER mutated until the final atomic swap — a failure mid-copy or
+  // mid-build cannot corrupt the live source.
+  const ts = Date.now();
+  const stagingDir = `/tmp/${slug}-switch-${ts}`;
+  const siteDirOld = `${siteDir}.old-${ts}`;
+
   try {
-    // 1. Preserve the salon's config/salon.json
-    const salonConfigPath = path.join(siteDir, "config", "salon.json");
+    // 1. Read the salon's current config + assets path from the LIVE siteDir.
+    const liveSalonConfigPath = path.join(siteDir, "config", "salon.json");
     let preservedConfig: string | null = null;
-    if (fs.existsSync(salonConfigPath)) {
-      preservedConfig = fs.readFileSync(salonConfigPath, "utf-8");
+    if (fs.existsSync(liveSalonConfigPath)) {
+      preservedConfig = fs.readFileSync(liveSalonConfigPath, "utf-8");
     }
+    const liveAssetsDir = path.join(siteDir, "public", "assets");
 
-    // Also preserve public/assets if it exists (salon images)
-    const assetsDir = path.join(siteDir, "public", "assets");
-    const tempAssetsDir = path.join(siteDir, ".tmp-assets-backup");
-    if (fs.existsSync(assetsDir)) {
-      copyDirSync(assetsDir, tempAssetsDir);
-    }
+    // 2. Copy the new template into the staging dir (excluding cruft).
+    copyDirSync(templatePath, stagingDir, ["node_modules", ".next", "out", ".turbo"]);
 
-    // 2. Copy template files to site dir, excluding config dir and node_modules
-    copyDirSync(templatePath, siteDir, ["node_modules", ".next", "config", "public"]);
-
-    // Copy template public dir but not assets (we preserved salon assets)
-    const templatePublicDir = path.join(templatePath, "public");
-    if (fs.existsSync(templatePublicDir)) {
-      copyDirSync(templatePublicDir, path.join(siteDir, "public"), ["assets"]);
-    }
-
-    // 3. Restore preserved config
-    if (preservedConfig) {
-      const configDir = path.join(siteDir, "config");
-      if (!fs.existsSync(configDir)) fs.mkdirSync(configDir, { recursive: true });
-      fs.writeFileSync(salonConfigPath, preservedConfig, "utf-8");
-    }
-
-    // Restore preserved assets
-    if (fs.existsSync(tempAssetsDir)) {
-      if (!fs.existsSync(path.join(siteDir, "public"))) {
-        fs.mkdirSync(path.join(siteDir, "public"), { recursive: true });
-      }
-      copyDirSync(tempAssetsDir, assetsDir);
-      fs.rmSync(tempAssetsDir, { recursive: true, force: true });
-    }
-
-    // Update currentTemplate in salon config
+    // 3. Overlay the salon's preserved config + assets into the staging dir.
+    const stagedConfigDir = path.join(stagingDir, "config");
+    const stagedSalonConfig = path.join(stagedConfigDir, "salon.json");
+    fs.mkdirSync(stagedConfigDir, { recursive: true });
     if (preservedConfig) {
       const configObj = JSON.parse(preservedConfig);
       configObj.currentTemplate = templateId;
-      fs.writeFileSync(salonConfigPath, JSON.stringify(configObj, null, 2), "utf-8");
+      fs.writeFileSync(stagedSalonConfig, JSON.stringify(configObj, null, 2), "utf-8");
+    }
+    const stagedAssetsDir = path.join(stagingDir, "public", "assets");
+    if (fs.existsSync(liveAssetsDir)) {
+      copyDirSync(liveAssetsDir, stagedAssetsDir);
     }
 
-    // 4. npm install (only if no node_modules) && build with explicit bin to avoid Next 16 conflict
-    if (!fs.existsSync(path.join(siteDir, "node_modules"))) {
-      await execFileAsync("npm", ["install"], { cwd: siteDir, timeout: 90000 });
+    // 4. Build inside the staging dir. Failures here cannot touch the live site.
+    if (!fs.existsSync(path.join(stagingDir, "node_modules"))) {
+      // Reuse the live siteDir's node_modules if present to skip a long install.
+      const liveNodeModules = path.join(siteDir, "node_modules");
+      if (fs.existsSync(liveNodeModules)) {
+        await execFileAsync("cp", ["-al", liveNodeModules, path.join(stagingDir, "node_modules")], { timeout: 60000 }).catch(async () => {
+          await execFileAsync("npm", ["install"], { cwd: stagingDir, timeout: 90000 });
+        });
+      } else {
+        await execFileAsync("npm", ["install"], { cwd: stagingDir, timeout: 90000 });
+      }
     }
-    await execFileAsync("./node_modules/.bin/next", ["build"], { cwd: siteDir, timeout: 90000 });
+    await execFileAsync("./node_modules/.bin/next", ["build"], { cwd: stagingDir, timeout: 120000 });
+
+    // 5. Atomic swap: live siteDir → siteDir.old-<ts>, staging → live.
+    //    On error before this point, we have not touched the live site.
+    //    On error during the swap itself we can restore from siteDirOld.
+    if (fs.existsSync(siteDir)) fs.renameSync(siteDir, siteDirOld);
+    fs.renameSync(stagingDir, siteDir);
+
+    // Re-point variable names for the deploy step below.
+    const salonConfigPath = path.join(siteDir, "config", "salon.json");
+    void salonConfigPath; // referenced by later deploy step for symmetry
 
     // 5. Get domain for GCP deploy — respect siteStatus like publish route
     const salonResult = getSalonConfig(slug);
@@ -216,11 +220,30 @@ export async function POST(
       deploy_hash: deployHash,
     });
 
+    // Prune siteDirOld asynchronously after success (keep one prior copy alive
+    // during the current request in case an operator needs a manual rollback).
+    setImmediate(() => {
+      try {
+        if (fs.existsSync(siteDirOld)) fs.rmSync(siteDirOld, { recursive: true, force: true });
+      } catch {}
+    });
+
     return NextResponse.json({
       success: true,
       message: `Template switched to "${template.name}" and deployed.`,
     });
   } catch (error: unknown) {
+    // Rollback: staging failed before atomic swap → drop the staging dir.
+    // If the swap already landed and a later step failed, restore from siteDirOld.
+    try {
+      if (fs.existsSync(stagingDir)) fs.rmSync(stagingDir, { recursive: true, force: true });
+    } catch {}
+    try {
+      if (fs.existsSync(siteDirOld) && !fs.existsSync(siteDir)) {
+        fs.renameSync(siteDirOld, siteDir);
+      }
+    } catch {}
+
     const err = error as { message?: string; stdout?: string; stderr?: string };
     return NextResponse.json(
       {

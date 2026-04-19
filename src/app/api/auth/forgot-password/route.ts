@@ -1,10 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createResetToken } from "@/lib/db";
-import { sendResetEmail } from "@/lib/otp";
 import { checkRateLimit, withRateLimitHeaders } from "@/lib/rate-limit";
 
-const CMS_BASE_URL = process.env.CMS_BASE_URL ?? "https://cms.enrichco.us";
-
+/**
+ * Forgot-password is disabled at the endpoint level until the IMS
+ * password-change API is wired up. Previously this route created a reset
+ * token and emailed a link that pointed at `/reset-password`, but the
+ * corresponding POST on that route has always returned 501 — so the token
+ * was issued publicly and never consumable.
+ *
+ * Behavior now:
+ *   - Rate-limit is retained (defense in depth).
+ *   - No token is created. No email is sent.
+ *   - Response is identical whether the email exists or not
+ *     (no enumeration signal).
+ *   - Body message tells the user to contact their admin.
+ */
 export async function POST(request: NextRequest) {
   const ip =
     request.headers.get("x-forwarded-for")?.split(",")[0].trim() ??
@@ -20,24 +30,14 @@ export async function POST(request: NextRequest) {
     return withRateLimitHeaders(res, rl);
   }
 
-  const { email } = await request.json().catch(() => null);
-
+  const body = await request.json().catch(() => null);
+  const email = body?.email;
   if (!email || typeof email !== "string") {
     return NextResponse.json({ error: "A valid email address is required" }, { status: 400 });
   }
 
-  const normalizedEmail = email.toLowerCase().trim();
-
-  // Always return 200 — prevents email enumeration
-  try {
-    const token = createResetToken(normalizedEmail);
-    const resetUrl = `${CMS_BASE_URL}/reset-password?token=${token}`;
-    await sendResetEmail(normalizedEmail, token, resetUrl);
-    return NextResponse.json({
-      message: "If an account with that email exists, we've sent a password reset link.",
-    });
-  } catch (err) {
-    console.error("[auth/forgot-password] Unexpected error:", err);
-    return NextResponse.json({ error: "Something went wrong — please try again later" }, { status: 500 });
-  }
+  return NextResponse.json({
+    message:
+      "Self-service password reset is not available yet. Please contact your CMS administrator to reset your password.",
+  });
 }

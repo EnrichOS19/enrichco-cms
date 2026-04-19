@@ -98,6 +98,12 @@ export function getSalonConfig(slug: string): { config: SalonConfig; dirName: st
   }
 }
 
+/** SHA-256 of the canonical JSON representation — used as an ETag for optimistic locking. */
+export function configEtag(config: SalonConfig): string {
+  const { createHash } = require("crypto") as typeof import("crypto");
+  return createHash("sha256").update(JSON.stringify(config)).digest("hex").slice(0, 16);
+}
+
 export function saveSalonConfig(slug: string, config: SalonConfig): boolean {
   const dirName = findSalonDir(slug);
   if (!dirName) return false;
@@ -105,19 +111,22 @@ export function saveSalonConfig(slug: string, config: SalonConfig): boolean {
   const configDir = path.join(SITES_DIR, dirName, "config");
   const configPath = path.join(configDir, "salon.json");
   try {
-    // Phase 3B: back up existing config before overwriting (UUID filename prevents collisions)
+    // Back up existing config before overwriting.
+    // Timestamped filename sorts chronologically via basic string sort (ISO-like).
     if (fs.existsSync(configPath)) {
-      const { randomUUID } = require("crypto") as typeof import("crypto");
-      const backupPath = path.join(configDir, `salon.json.bak.${randomUUID()}`);
+      const ts = new Date().toISOString().replace(/[:.]/g, "-");
+      const backupPath = path.join(configDir, `salon.json.bak.${ts}`);
       fs.copyFileSync(configPath, backupPath);
 
-      // Rotate: keep only the last 10 backups
+      // Rotate: keep only the last 10 backups, ranked by mtime (handles
+      // any legacy UUID-named backups already on disk).
       const backups = fs.readdirSync(configDir)
         .filter((f) => f.startsWith("salon.json.bak."))
-        .sort();
+        .map((f) => ({ f, m: fs.statSync(path.join(configDir, f)).mtimeMs }))
+        .sort((a, b) => a.m - b.m);
       if (backups.length > 10) {
         for (const old of backups.slice(0, backups.length - 10)) {
-          try { fs.unlinkSync(path.join(configDir, old)); } catch {}
+          try { fs.unlinkSync(path.join(configDir, old.f)); } catch {}
         }
       }
     }
@@ -136,7 +145,9 @@ export function listSalonConfigBackups(slug: string): string[] {
   try {
     return fs.readdirSync(configDir)
       .filter((f) => f.startsWith("salon.json.bak."))
-      .sort()
+      .map((f) => ({ f, m: fs.statSync(path.join(configDir, f)).mtimeMs }))
+      .sort((a, b) => a.m - b.m)
+      .map((x) => x.f)
       .reverse();
   } catch {
     return [];

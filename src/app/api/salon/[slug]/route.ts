@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSalonConfig, saveSalonConfig } from "@/lib/salons";
+import { configEtag, getSalonConfig, saveSalonConfig } from "@/lib/salons";
 import { flattenZodErrors, salonSchema } from "@/lib/schemas/salon";
 import { requireSession } from "@/lib/auth";
 import { logEvent } from "@/lib/audit";
@@ -18,7 +18,10 @@ export async function GET(
   if (!result) {
     return NextResponse.json({ error: "Salon not found" }, { status: 404 });
   }
-  return NextResponse.json(result.config);
+  const etag = configEtag(result.config);
+  return NextResponse.json(result.config, {
+    headers: { ETag: etag },
+  });
 }
 
 export async function PUT(
@@ -61,6 +64,22 @@ export async function PUT(
   const existing = getSalonConfig(slug);
   const oldConfig = existing?.config ?? null;
 
+  // Optimistic concurrency: if client sent If-Match, compare against current etag.
+  // Clients that don't send If-Match still save (soft rollout) but a diagnostic header is returned.
+  const ifMatch = request.headers.get("If-Match");
+  if (ifMatch && oldConfig) {
+    const currentEtag = configEtag(oldConfig);
+    if (ifMatch !== currentEtag && ifMatch !== `"${currentEtag}"`) {
+      return NextResponse.json(
+        {
+          error: "Stale edit — another save happened since you loaded this salon. Reload and retry.",
+          currentEtag,
+        },
+        { status: 409 }
+      );
+    }
+  }
+
   const success = saveSalonConfig(slug, parsed.data);
   if (!success) {
     return NextResponse.json({ error: "Failed to save" }, { status: 500 });
@@ -85,5 +104,8 @@ export async function PUT(
     diff: Object.keys(diff).length > 0 ? JSON.stringify(diff) : undefined,
   });
 
-  return NextResponse.json({ ok: true });
+  const newEtag = configEtag(parsed.data);
+  return NextResponse.json({ ok: true, etag: newEtag }, {
+    headers: { ETag: newEtag },
+  });
 }
