@@ -82,15 +82,35 @@ function getDb(): Database.Database {
     );
 
     CREATE TABLE IF NOT EXISTS users_salons (
-      user_email TEXT NOT NULL,
-      slug       TEXT NOT NULL,
-      granted_by TEXT NOT NULL,
-      granted_at INTEGER NOT NULL,
+      user_email   TEXT NOT NULL,
+      slug         TEXT NOT NULL,
+      granted_by   TEXT NOT NULL,
+      granted_at   INTEGER NOT NULL,
+      ims_store_id TEXT,
       PRIMARY KEY (user_email, slug)
     );
     CREATE INDEX IF NOT EXISTS idx_users_salons_email ON users_salons(user_email);
     CREATE INDEX IF NOT EXISTS idx_users_salons_slug  ON users_salons(slug);
+
+    CREATE TABLE IF NOT EXISTS pos_pairings (
+      email       TEXT NOT NULL,
+      store_id    TEXT NOT NULL,
+      pair_id     TEXT NOT NULL,
+      device_name TEXT NOT NULL DEFAULT 'CMS-Web',
+      created_at  INTEGER NOT NULL,
+      PRIMARY KEY (email, store_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_pos_pairings_email ON pos_pairings(email);
   `);
+
+  // Idempotent column migration: add ims_store_id to users_salons if missing
+  // (needed when upgrading a database created before Phase 2)
+  const hasSalonStoreId = (_db.prepare(
+    `SELECT COUNT(*) AS c FROM pragma_table_info('users_salons') WHERE name='ims_store_id'`
+  ).get() as { c: number }).c > 0;
+  if (!hasSalonStoreId) {
+    _db.exec(`ALTER TABLE users_salons ADD COLUMN ims_store_id TEXT`);
+  }
 
   // Cleanup expired data on first connection
   const now = Math.floor(Date.now() / 1000);
@@ -534,4 +554,74 @@ export function inviteUser(email: string, role: UserRole, name?: string): boolea
     `INSERT INTO users (email, role, name, created_at, last_login, active) VALUES (?, ?, ?, ?, 0, 1)`
   ).run(email.toLowerCase(), role, name || "", now);
   return true;
+}
+
+// ─── POS Pairings ──────────────────────────────────────────────────────────
+// Stores (email, storeId) → pairId so CMS logins reuse device slots.
+
+export interface DbPosPairing {
+  email: string;
+  store_id: string;
+  pair_id: string;
+  device_name: string;
+  created_at: number;
+}
+
+export interface SavePosPairingArgs {
+  email: string;
+  storeId: string;
+  pairId: string;
+  deviceName: string;
+}
+
+/** Retrieve an existing pairing for (email, storeId). Returns null if none. */
+export function getPosPairing(email: string, storeId: string): DbPosPairing | null {
+  const db = getDb();
+  const row = db.prepare(
+    `SELECT * FROM pos_pairings WHERE email = ? AND store_id = ?`
+  ).get(email.toLowerCase(), storeId) as DbPosPairing | undefined;
+  return row ?? null;
+}
+
+/** Persist a new pairing (INSERT OR REPLACE — idempotent). */
+export function savePosPairing(args: SavePosPairingArgs): void {
+  const db = getDb();
+  const now = Math.floor(Date.now() / 1000);
+  db.prepare(
+    `INSERT OR REPLACE INTO pos_pairings (email, store_id, pair_id, device_name, created_at)
+     VALUES (?, ?, ?, ?, ?)`
+  ).run(args.email.toLowerCase(), args.storeId, args.pairId, args.deviceName, now);
+}
+
+/** List all pairings for an email (admin / diagnostic use). */
+export function listPosPairingsForEmail(email: string): DbPosPairing[] {
+  const db = getDb();
+  return db.prepare(
+    `SELECT * FROM pos_pairings WHERE email = ? ORDER BY created_at DESC`
+  ).all(email.toLowerCase()) as DbPosPairing[];
+}
+
+// ─── users_salons ims_store_id helpers ────────────────────────────────────
+
+/** Return every { slug, ims_store_id } row for an email. */
+export function listSalonGrantsForUser(
+  email: string
+): Array<{ slug: string; ims_store_id: string | null }> {
+  const db = getDb();
+  return db.prepare(
+    `SELECT slug, ims_store_id FROM users_salons WHERE user_email = ? ORDER BY slug`
+  ).all(email.toLowerCase()) as Array<{ slug: string; ims_store_id: string | null }>;
+}
+
+/** Update the ims_store_id on an existing grant. */
+export function setSalonGrantStoreId(
+  email: string,
+  slug: string,
+  imsStoreId: string
+): boolean {
+  const db = getDb();
+  const result = db.prepare(
+    `UPDATE users_salons SET ims_store_id = ? WHERE user_email = ? AND slug = ?`
+  ).run(imsStoreId, email.toLowerCase(), slug);
+  return result.changes > 0;
 }
