@@ -519,8 +519,7 @@ export interface DbSalonGrant {
 export function listAllGrants(): DbSalonGrant[] {
   const db = getDb();
   return db.prepare(
-    `SELECT user_email, slug, granted_by, granted_at,
-            NULL AS ims_store_id
+    `SELECT user_email, slug, granted_by, granted_at, ims_store_id
      FROM users_salons
      ORDER BY granted_at DESC`
   ).all() as DbSalonGrant[];
