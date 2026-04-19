@@ -36,6 +36,12 @@ import {
   Search,
   Eye,
 } from "lucide-react";
+import {
+  shouldShowTab,
+  shouldShowField,
+  canPublishToProduction,
+  canSwitchTemplate,
+} from "@/lib/roles";
 
 interface SalonConfig {
   name: string;
@@ -132,7 +138,8 @@ export default function SalonEditorPage() {
   const [config, setConfig] = useState<SalonConfig | null>(null);
   const isProduction = (config?.siteStatus ?? "staging") === "production";
   const [userRole, setUserRole] = useState<string | null>(null);
-  const canPublish = userRole === "admin" || userRole === "superadmin";
+  const canPublish = canPublishToProduction(userRole);
+  const canSwitchTpl = canSwitchTemplate(userRole);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
@@ -739,7 +746,7 @@ export default function SalonEditorPage() {
 
           {/* Tab navigation */}
           <nav className="flex-1 p-3" role="tablist" aria-label="Editor sections">
-            {TABS.map((tab) => {
+            {TABS.filter((tab) => shouldShowTab(tab.id, userRole)).map((tab) => {
               const Icon = tab.icon;
               return (
                 <button
@@ -804,7 +811,7 @@ export default function SalonEditorPage() {
             )}
           </div>
           <nav className="flex overflow-x-auto px-2 py-2 gap-1 scrollbar-none" role="tablist" aria-label="Editor sections">
-            {TABS.map((tab) => {
+            {TABS.filter((tab) => shouldShowTab(tab.id, userRole)).map((tab) => {
               const Icon = tab.icon;
               return (
                 <button
@@ -1490,17 +1497,19 @@ export default function SalonEditorPage() {
 
                 <Separator />
 
-                {/* Template Switcher */}
-                <div>
-                  <h3 className="text-sm font-semibold mb-1">Design Template</h3>
-                  <p className="text-xs text-muted-foreground mb-5">
-                    Switch the entire site design. Your content is always preserved.
-                  </p>
-                  <TemplateSwitcher
-                    slug={slug}
-                    currentTemplate={(config as Record<string, unknown>).currentTemplate as string | undefined}
-                  />
-                </div>
+                {/* Template Switcher — staff only */}
+                {canSwitchTpl && (
+                  <div>
+                    <h3 className="text-sm font-semibold mb-1">Design Template</h3>
+                    <p className="text-xs text-muted-foreground mb-5">
+                      Switch the entire site design. Your content is always preserved.
+                    </p>
+                    <TemplateSwitcher
+                      slug={slug}
+                      currentTemplate={(config as Record<string, unknown>).currentTemplate as string | undefined}
+                    />
+                  </div>
+                )}
               </div>
             )}
 
@@ -1828,7 +1837,7 @@ export default function SalonEditorPage() {
             )}
 
             {/* ===== SETTINGS TAB ===== */}
-            {activeTab === "settings" && (
+            {activeTab === "settings" && shouldShowTab("settings", userRole) && (
               <div className="space-y-8">
                 <Section title="Booking">
                   <Field label="Booking URL">
@@ -1840,59 +1849,69 @@ export default function SalonEditorPage() {
                   </Field>
                 </Section>
 
-                <Section title="Publishing">
-                  <Field label="Site Status">
-                    <select
-                      value={(config.siteStatus as string | undefined) ?? "staging"}
-                      onChange={(e) => updateField("siteStatus", e.target.value)}
-                      className="w-full h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
-                    >
-                      <option value="staging">Staging -- site is under construction</option>
-                      <option value="production">Production -- site is live</option>
-                    </select>
-                  </Field>
-                  <Field label="Staging Domain" hint="e.g. nailsalon12.mangotemplates.us">
-                    <Input
-                      value={(config.stagingDomain as string | undefined) || ""}
-                      onChange={(e) => updateField("stagingDomain", e.target.value)}
-                      placeholder="nailsalon12.mangotemplates.us"
-                    />
-                  </Field>
-                  <Field label="Production Domain" hint="e.g. queennailspa.net">
-                    <Input
-                      value={(config.domain as string | undefined) || ""}
-                      onChange={(e) => updateField("domain", e.target.value)}
-                      placeholder="yoursalon.com"
-                    />
-                  </Field>
-                </Section>
+                {shouldShowField("siteStatus", userRole) && (
+                  <Section title="Publishing">
+                    <Field label="Site Status">
+                      <select
+                        value={(config.siteStatus as string | undefined) ?? "staging"}
+                        onChange={(e) => updateField("siteStatus", e.target.value)}
+                        className="w-full h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                      >
+                        <option value="staging">Staging -- site is under construction</option>
+                        <option value="production">Production -- site is live</option>
+                      </select>
+                    </Field>
+                    {shouldShowField("stagingDomain", userRole) && (
+                      <Field label="Staging Domain" hint="e.g. nailsalon12.mangotemplates.us">
+                        <Input
+                          value={(config.stagingDomain as string | undefined) || ""}
+                          onChange={(e) => updateField("stagingDomain", e.target.value)}
+                          placeholder="nailsalon12.mangotemplates.us"
+                        />
+                      </Field>
+                    )}
+                    {shouldShowField("domain", userRole) && (
+                      <Field label="Production Domain" hint="e.g. queennailspa.net">
+                        <Input
+                          value={(config.domain as string | undefined) || ""}
+                          onChange={(e) => updateField("domain", e.target.value)}
+                          placeholder="yoursalon.com"
+                        />
+                      </Field>
+                    )}
+                  </Section>
+                )}
 
-                <Section title="Ownership &amp; Management">
-                  <div className="grid grid-cols-2 gap-4">
-                    <Field label="Domain Ownership" hint="Who owns this domain?">
-                      <select
-                        value={(config.domainOwnership as string | undefined) ?? ""}
-                        onChange={(e) => updateField("domainOwnership", e.target.value || undefined)}
-                        className="w-full h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
-                      >
-                        <option value="">Not set</option>
-                        <option value="enrichco">EnrichCo — we own the domain</option>
-                        <option value="client">Client — salon owns the domain</option>
-                      </select>
-                    </Field>
-                    <Field label="Website Manager" hint="Who manages this website?">
-                      <select
-                        value={(config.websiteManager as string | undefined) ?? ""}
-                        onChange={(e) => updateField("websiteManager", e.target.value || undefined)}
-                        className="w-full h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
-                      >
-                        <option value="">Not set</option>
-                        <option value="ai-team">AI Team — managed via CMS</option>
-                        <option value="marketing-team">Marketing Team — managed via FTP</option>
-                      </select>
-                    </Field>
-                  </div>
-                </Section>
+                {shouldShowField("domainOwnership", userRole) && (
+                  <Section title="Ownership &amp; Management">
+                    <div className="grid grid-cols-2 gap-4">
+                      <Field label="Domain Ownership" hint="Who owns this domain?">
+                        <select
+                          value={(config.domainOwnership as string | undefined) ?? ""}
+                          onChange={(e) => updateField("domainOwnership", e.target.value || undefined)}
+                          className="w-full h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                        >
+                          <option value="">Not set</option>
+                          <option value="enrichco">EnrichCo — we own the domain</option>
+                          <option value="client">Client — salon owns the domain</option>
+                        </select>
+                      </Field>
+                      {shouldShowField("websiteManager", userRole) && (
+                        <Field label="Website Manager" hint="Who manages this website?">
+                          <select
+                            value={(config.websiteManager as string | undefined) ?? ""}
+                            onChange={(e) => updateField("websiteManager", e.target.value || undefined)}
+                            className="w-full h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                          >
+                            <option value="">Not set</option>
+                            <option value="ai-team">AI Team — managed via CMS</option>
+                            <option value="marketing-team">Marketing Team — managed via FTP</option>
+                          </select>
+                        </Field>
+                      )}
+                    </div>
+                  </Section>
+                )}
 
                 <Section title="Social Links">
                   {[
@@ -1973,17 +1992,19 @@ export default function SalonEditorPage() {
               className="gap-2"
             >
               {previewing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Eye className="h-3.5 w-3.5" />}
-              {previewing ? "Building..." : "Preview"}
+              {previewing ? "Building..." : "Publish to Staging"}
             </Button>
-            <Button
-              size="sm"
-              onClick={handleGoLive}
-              disabled={publishing || previewing || saveStatus === "error"}
-              className="gap-2 bg-green-600 hover:bg-green-700"
-            >
-              {publishing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Rocket className="h-3.5 w-3.5" />}
-              {publishing ? "Publishing..." : "Go Live"}
-            </Button>
+            {canPublish && (
+              <Button
+                size="sm"
+                onClick={handleGoLive}
+                disabled={publishing || previewing || saveStatus === "error"}
+                className="gap-2 bg-green-600 hover:bg-green-700"
+              >
+                {publishing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Rocket className="h-3.5 w-3.5" />}
+                {publishing ? "Publishing..." : "Go Live"}
+              </Button>
+            )}
           </div>
         </div>
       </div>
