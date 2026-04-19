@@ -38,7 +38,7 @@ import { GET } from "@/app/api/admin/salon-access/route";
 import { requireAdmin } from "@/lib/auth";
 import { listAllGrants } from "@/lib/db";
 import type { Session } from "@/lib/auth";
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 const ADMIN_SESSION: Session = { id: "sess-1", email: "admin@enrichco.us", role: "admin" };
 
@@ -48,8 +48,8 @@ function makeAdminAuth() {
 
 function makeNonAdminAuth() {
   vi.mocked(requireAdmin).mockResolvedValue({
-    response: new Response(JSON.stringify({ error: "Forbidden" }), { status: 403 }),
-  } as { response: Response });
+    response: NextResponse.json({ error: "Forbidden" }, { status: 403 }),
+  });
 }
 
 describe("GET /api/admin/salon-access?all=true", () => {

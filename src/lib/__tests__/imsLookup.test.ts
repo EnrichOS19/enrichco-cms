@@ -26,7 +26,7 @@ vi.mock("@/lib/auth", async (importOriginal) => {
 import { GET, _resetCaches } from "@/app/api/admin/ims-lookup/route";
 import { requireAdmin } from "@/lib/auth";
 import type { Session } from "@/lib/auth";
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -39,8 +39,8 @@ function makeAdminAuth(session = ADMIN_SESSION) {
 
 function makeNonAdminAuth() {
   vi.mocked(requireAdmin).mockResolvedValue({
-    response: new Response(JSON.stringify({ error: "Forbidden" }), { status: 403 }),
-  } as { response: Response });
+    response: NextResponse.json({ error: "Forbidden" }, { status: 403 }),
+  });
 }
 
 function makeRequest(email: string): NextRequest {

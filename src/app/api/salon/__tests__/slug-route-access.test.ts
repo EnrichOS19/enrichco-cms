@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import path from "path";
 import fs from "fs";
 
@@ -62,10 +62,7 @@ function adminSession(email = "admin@enrichco.us") {
 
 function forbidden() {
   return {
-    response: new Response(JSON.stringify({ error: "Forbidden" }), {
-      status: 403,
-      headers: { "Content-Type": "application/json" },
-    }),
+    response: NextResponse.json({ error: "Forbidden" }, { status: 403 }),
   };
 }
 
@@ -233,10 +230,7 @@ describe("rollback route — requireAdmin (admin-only, not downgraded to owner a
 
   it("POST /api/salon/salon/rollback as owner → 403 (requireAdmin blocks it)", async () => {
     vi.mocked(requireAdmin).mockResolvedValue({
-      response: new Response(JSON.stringify({ error: "Forbidden — admin role required" }), {
-        status: 403,
-        headers: { "Content-Type": "application/json" },
-      }),
+      response: NextResponse.json({ error: "Forbidden — admin role required" }, { status: 403 }),
     });
 
     const { POST } = await import("@/app/api/salon/[slug]/rollback/route");
