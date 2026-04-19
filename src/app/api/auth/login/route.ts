@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { storeOtp } from "@/lib/db";
+import { storeOtp, isDeviceTrusted, createSession, getEffectiveRole, upsertUserOnLogin, SESSION_TTL_REMEMBER } from "@/lib/db";
+import { COOKIE_NAME } from "@/lib/auth";
 import { sendOtpEmail } from "@/lib/otp";
 import { checkRateLimit, withRateLimitHeaders } from "@/lib/rate-limit";
 import crypto from "crypto";
@@ -75,14 +76,33 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  if (!imsRes.ok) {
+  // Parse IMS response body — IMS returns 200 for login results, 400 for validation errors
+  let imsData: ImsAuthResponse;
+  try {
+    const raw = await imsRes.json();
+    imsData = raw as ImsAuthResponse;
+
+    // IMS 400 = validation error (e.g. password too short) — surface the actual message
+    if (!imsRes.ok) {
+      const validationErrors = (raw as Record<string, unknown>)?.errors as Record<string, string[]> | undefined;
+      if (validationErrors) {
+        const messages = Object.values(validationErrors).flat();
+        return NextResponse.json(
+          { error: messages[0] || "Validation error" },
+          { status: 400 }
+        );
+      }
+      return NextResponse.json(
+        { error: raw?.message || "Invalid credentials" },
+        { status: 401 }
+      );
+    }
+  } catch {
     return NextResponse.json(
-      { error: "Invalid credentials" },
-      { status: 401 }
+      { error: "Invalid response from authentication server" },
+      { status: 502 }
     );
   }
-
-  const imsData: ImsAuthResponse = await imsRes.json();
 
   if (!imsData.return) {
     return NextResponse.json(
@@ -95,6 +115,31 @@ export async function POST(request: NextRequest) {
   const role = decodeImsRole(imsData.token);
   const normalizedEmail = email.toLowerCase();
 
+  // ── Step 2.5: Check if this browser is trusted — skip OTP if so ─────────
+  const deviceToken = request.cookies.get("cms-device")?.value;
+  if (deviceToken && isDeviceTrusted(deviceToken, normalizedEmail)) {
+    // Trusted device — create session immediately, no OTP needed
+    const effectiveRole = getEffectiveRole(normalizedEmail, role);
+    upsertUserOnLogin(normalizedEmail, effectiveRole);
+    const sessionId = createSession(normalizedEmail, effectiveRole, true);
+
+    const response = NextResponse.json({
+      step: "complete",
+      email: normalizedEmail,
+      role: effectiveRole,
+    });
+
+    response.cookies.set(COOKIE_NAME, sessionId, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: SESSION_TTL_REMEMBER,
+      path: "/",
+    });
+
+    return response;
+  }
+
   // ── Step 3: Generate + store OTP ────────────────────────────────────────
   const code = generateOtp();
   storeOtp(normalizedEmail, code, { email: normalizedEmail, role });
@@ -103,18 +148,13 @@ export async function POST(request: NextRequest) {
   const sent = await sendOtpEmail(normalizedEmail, code);
 
   if (!sent.ok) {
-    // Log but don't block — user can still enter the code from console in dev
     console.error(`[auth/login] Failed to send OTP email to ${normalizedEmail}`);
   }
 
-  // In console (dev) mode, include the code so testers can see it
   return NextResponse.json(
     {
       step: "otp_required",
       email: normalizedEmail,
-      ...(sent.provider === "console" && sent.code
-        ? { _debug_code: sent.code }
-        : {}),
     },
     { status: 200 }
   );

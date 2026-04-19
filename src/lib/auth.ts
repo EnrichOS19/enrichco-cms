@@ -24,9 +24,9 @@ export interface Session {
 }
 
 /** True when auth enforcement should be skipped. Only valid in local dev.
- *  Set CMS_AUTH_DISABLED=*** to bypass (matches npm test/dev:test scripts). */
+ *  Set CMS_AUTH_DISABLED=true to bypass (matches npm test/dev:test scripts). */
 export function isAuthDisabled(): boolean {
-  return process.env.CMS_AUTH_DISABLED === "***";
+  return process.env.CMS_AUTH_DISABLED === "true";
 }
 
 /**
@@ -38,7 +38,7 @@ export async function getSessionFromRequest(
   request: NextRequest
 ): Promise<Session | null> {
   if (isAuthDisabled()) {
-    return { id: "dev", email: "dev@enrichco.us", role: "admin" };
+    return { id: "dev", email: "dev@enrichco.us", role: "superadmin" };
   }
 
   const token = request.cookies.get(COOKIE_NAME)?.value;
@@ -55,7 +55,7 @@ export async function getSessionFromRequest(
  */
 export async function getSessionFromCookies(): Promise<Session | null> {
   if (isAuthDisabled()) {
-    return { id: "dev", email: "dev@enrichco.us", role: "admin" };
+    return { id: "dev", email: "dev@enrichco.us", role: "superadmin" };
   }
 
   const cookieStore = await cookies();
@@ -93,7 +93,7 @@ export async function requireSession(
 }
 
 /**
- * requireAdmin — like requireSession but also enforces admin role.
+ * requireAdmin — like requireSession but also enforces admin or superadmin role.
  */
 export async function requireAdmin(
   request: NextRequest
@@ -101,10 +101,30 @@ export async function requireAdmin(
   const auth = await requireSession(request);
   if ("response" in auth) return auth;
 
-  if (auth.session.role !== "admin") {
+  if (auth.session.role !== "admin" && auth.session.role !== "superadmin") {
     return {
       response: NextResponse.json(
         { error: "Forbidden — admin role required" },
+        { status: 403 }
+      ),
+    };
+  }
+  return auth;
+}
+
+/**
+ * requireSuperAdmin — enforces superadmin role only.
+ */
+export async function requireSuperAdmin(
+  request: NextRequest
+): Promise<{ session: Session } | { response: NextResponse }> {
+  const auth = await requireSession(request);
+  if ("response" in auth) return auth;
+
+  if (auth.session.role !== "superadmin") {
+    return {
+      response: NextResponse.json(
+        { error: "Forbidden — super admin access required" },
         { status: 403 }
       ),
     };

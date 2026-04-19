@@ -6,19 +6,30 @@ const SITES_DIR = process.env.SITES_DIR || path.join(process.env.HOME || "/Users
 
 function getSalonDirs(): { dirName: string; slug: string; configPath: string }[] {
   const entries = fs.readdirSync(SITES_DIR, { withFileTypes: true });
-  const results: { dirName: string; slug: string; configPath: string }[] = [];
+  const seen = new Map<string, { dirName: string; slug: string; configPath: string }>();
 
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
+    if (entry.name.startsWith("_removed") || entry.name.startsWith(".")) continue;
     const configPath = path.join(SITES_DIR, entry.name, "config", "salon.json");
     if (!fs.existsSync(configPath)) continue;
 
     // Derive slug: remove -website suffix if present
     const slug = entry.name.replace(/-website$/, "");
-    results.push({ dirName: entry.name, slug, configPath });
+
+    // Deduplicate: prefer the -website version over bare directory
+    const existing = seen.get(slug);
+    if (existing) {
+      if (entry.name.endsWith("-website")) {
+        seen.set(slug, { dirName: entry.name, slug, configPath });
+      }
+      // else keep existing (it's already the -website version or first found)
+    } else {
+      seen.set(slug, { dirName: entry.name, slug, configPath });
+    }
   }
 
-  return results;
+  return Array.from(seen.values());
 }
 
 function inferStatus(config: SalonConfig, dirName: string): "Demo Ready" | "Approved" | "New" {
@@ -52,6 +63,8 @@ export function getAllSalons(): SalonSummary[] {
         phone: config.phone || "",
         serviceCount,
         galleryCount: config.gallery?.length || 0,
+        domainOwnership: config.domainOwnership,
+        websiteManager: config.websiteManager,
         dirName,
       });
     } catch {

@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSalonSiteDir } from "@/lib/salons";
+import { getSalonSiteDir, getSalonConfig } from "@/lib/salons";
 import fs from "fs";
 import path from "path";
-import { exec } from "child_process";
+import crypto from "crypto";
+import { execFile } from "child_process";
 import { promisify } from "util";
-import { requireSession } from "@/lib/auth";
+import { requireAdmin } from "@/lib/auth";
+import { logEvent } from "@/lib/audit";
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 180; // Raised from 90s — builds regularly exceed 90s
@@ -40,8 +42,9 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ slug: string }> }
 ) {
-  const auth = await requireSession(request);
+  const auth = await requireAdmin(request);
   if ("response" in auth) return auth.response;
+  const { session } = auth;
 
   const { slug } = await params;
   const { templateId } = await request.json();
@@ -75,6 +78,16 @@ export async function POST(
 
   // Resolve template path (relative paths are relative to TEMPLATES_DIR)
   const templatePath = path.resolve(TEMPLATES_DIR, template.path);
+
+  // Path traversal guard: resolved path must be within TEMPLATES_DIR
+  const resolvedTemplatesDir = path.resolve(TEMPLATES_DIR);
+  if (!templatePath.startsWith(resolvedTemplatesDir + path.sep) && templatePath !== resolvedTemplatesDir) {
+    return NextResponse.json(
+      { success: false, message: "Invalid template path" },
+      { status: 400 }
+    );
+  }
+
   if (!fs.existsSync(templatePath)) {
     return NextResponse.json(
       { success: false, message: `Template directory not found: ${templatePath}` },
@@ -138,25 +151,74 @@ export async function POST(
       fs.writeFileSync(salonConfigPath, JSON.stringify(configObj, null, 2), "utf-8");
     }
 
-    // 4. npm install && npm run build
-    await execAsync("npm install", { cwd: siteDir, timeout: 90000 });
-    await execAsync("npm run build", { cwd: siteDir, timeout: 90000 });
+    // 4. npm install (only if no node_modules) && build with explicit bin to avoid Next 16 conflict
+    if (!fs.existsSync(path.join(siteDir, "node_modules"))) {
+      await execFileAsync("npm", ["install"], { cwd: siteDir, timeout: 90000 });
+    }
+    await execFileAsync("./node_modules/.bin/next", ["build"], { cwd: siteDir, timeout: 90000 });
 
-    // 5. Firebase deploy
-    const firebaseToken = process.env.FIREBASE_TOKEN;
-    const firebaseProject = process.env.FIREBASE_PROJECT || "stg-enrichco-mangosalon-b3a03";
-    if (!firebaseToken) {
+    // 5. Get domain for GCP deploy — respect siteStatus like publish route
+    const salonResult = getSalonConfig(slug);
+    const siteStatus = salonResult?.config?.siteStatus ?? "staging";
+    const isProduction = siteStatus === "production";
+    const domain = isProduction ? salonResult?.config?.domain : salonResult?.config?.stagingDomain;
+    if (!domain) {
+      const missing = isProduction ? "domain" : "stagingDomain";
       return NextResponse.json(
-        { success: false, message: "FIREBASE_TOKEN is not configured." },
-        { status: 500 },
+        { success: false, message: `Salon has no ${missing} configured. Set it in the Settings tab before switching templates.` },
+        { status: 422 }
       );
     }
-    const deployCmd = `firebase deploy --only hosting:${slug} --token "${firebaseToken}" --project ${firebaseProject}`;
-    await execAsync(deployCmd, { cwd: siteDir, timeout: 90000 });
+
+    // Defense-in-depth: reject domains with shell metacharacters
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9.\-]*\.[a-zA-Z]{2,}$/.test(domain)) {
+      return NextResponse.json({ success: false, message: "Invalid domain format" }, { status: 422 });
+    }
+
+    // 6. Local deploy (same as publish route — CMS runs on same server)
+    const tarPath = `/tmp/${slug}-tpl-${Date.now()}.tar.gz`;
+    await execFileAsync("tar", ["-czf", tarPath, "out/"], { cwd: siteDir, timeout: 30000 });
+
+    const tarBytes = fs.readFileSync(tarPath);
+    const deployHash = crypto.createHash("sha256").update(tarBytes).digest("hex").slice(0, 16);
+
+    const WEB_ROOT = process.env.WEB_ROOT || "/var/www";
+    const webRoot = `${WEB_ROOT}/${domain}`;
+    const publicDir = path.join(webRoot, "public");
+    const publicOld = path.join(webRoot, "public_old");
+    const outDir = path.join(webRoot, "out");
+    const tombstone = path.join(webRoot, "public_tombstone");
+
+    // Create web root + extract tar
+    await execFileAsync("mkdir", ["-p", webRoot], { timeout: 5000 });
+    await execFileAsync("tar", ["-xzf", tarPath, "-C", webRoot], { timeout: 30000 });
+
+    // Atomic swap: out → public (keep public_old for rollback)
+    if (fs.existsSync(publicDir)) {
+      if (fs.existsSync(tombstone)) fs.rmSync(tombstone, { recursive: true });
+      fs.renameSync(publicDir, tombstone);
+    }
+    if (fs.existsSync(publicOld)) fs.rmSync(publicOld, { recursive: true });
+    if (fs.existsSync(tombstone)) fs.renameSync(tombstone, publicOld);
+    if (fs.existsSync(outDir)) fs.renameSync(outDir, publicDir);
+
+    // Fix ownership
+    try { await execFileAsync("sudo", ["chown", "-R", "www-data:www-data", publicDir], { timeout: 10000 }); } catch {}
+
+    // Cleanup
+    try { fs.unlinkSync(tarPath); } catch {}
+
+    // Audit log
+    logEvent({
+      email: session.email,
+      action: "template_switch",
+      slug,
+      deploy_hash: deployHash,
+    });
 
     return NextResponse.json({
       success: true,
-      message: `Template switched to "${template.name}" and deployed successfully.`,
+      message: `Template switched to "${template.name}" and deployed.`,
     });
   } catch (error: unknown) {
     const err = error as { message?: string; stdout?: string; stderr?: string };

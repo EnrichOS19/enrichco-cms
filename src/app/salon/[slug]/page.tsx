@@ -341,9 +341,9 @@ export default function SalonEditorPage() {
     }
   };
 
-  // ── Preview: open staging URL immediately, build in background ───────
-  const handlePreview = () => {
-    if (!config) return;
+  // ── Preview: save → build staging → open staging URL ────────────────
+  const handlePreview = async () => {
+    if (!config || previewing) return;
 
     const stagingDomain = config.stagingDomain;
     if (!stagingDomain) {
@@ -351,18 +351,51 @@ export default function SalonEditorPage() {
       return;
     }
 
-    // Open immediately (synchronous — avoids popup blocker)
-    window.open(`https://${stagingDomain}`, "_blank");
+    // Open about:blank synchronously to secure popup permission,
+    // then navigate it to staging once the build completes.
+    const previewWin = window.open("about:blank", "_blank");
+    if (!previewWin) {
+      toast("Popup blocked — allow popups for this site and try again.", "error");
+      return;
+    }
+    previewWin.document.write(
+      `<!DOCTYPE html><html><head><title>Building preview…</title></head>` +
+      `<body style="background:#111;color:#fff;font-family:system-ui;` +
+      `display:flex;align-items:center;justify-content:center;height:100vh;margin:0">` +
+      `<div style="text-align:center"><h2>Building preview…</h2>` +
+      `<p style="color:#888">Saving your changes and rebuilding the staging site.<br>` +
+      `This usually takes 1–2 minutes.</p></div></body></html>`
+    );
+    previewWin.document.close();
 
-    // Flush save + build to staging in background
     setPreviewing(true);
-    flushSave().then((saved) => {
-      if (saved) {
-        fetch(`/api/salon/${slug}/publish?target=staging`, { method: "POST" })
-          .then(() => toast("Staging updated with your changes", "success"))
-          .catch(() => {});
+    try {
+      // 1. Save
+      const saved = await flushSave();
+      if (!saved) {
+        toast("Cannot preview — save failed. Fix errors first.", "error");
+        previewWin.close();
+        return;
       }
-    }).finally(() => setPreviewing(false));
+
+      // 2. Build + deploy to staging
+      const res = await fetch(`/api/salon/${slug}/publish?target=staging`, { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast(data.message || "Preview build failed", "error");
+        previewWin.close();
+        return;
+      }
+
+      // 3. Navigate the already-open window to the fresh staging site
+      previewWin.location.href = `https://${stagingDomain}`;
+      toast("Preview ready!", "success");
+    } catch {
+      toast("Preview build failed", "error");
+      previewWin.close();
+    } finally {
+      setPreviewing(false);
+    }
   };
 
   // Service helpers

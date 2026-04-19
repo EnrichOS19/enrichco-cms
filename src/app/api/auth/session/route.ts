@@ -10,7 +10,7 @@ export async function GET() {
     return NextResponse.json({
       authenticated: true,
       email: "dev@enrichco.us",
-      role: "admin",
+      role: "superadmin",
     });
   }
 

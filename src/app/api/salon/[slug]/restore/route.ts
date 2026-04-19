@@ -13,6 +13,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSalonSiteDir, listSalonConfigBackups, restoreSalonConfig } from "@/lib/salons";
 import { requireSession } from "@/lib/auth";
 import { logEvent } from "@/lib/audit";
+import path from "path";
 
 export const dynamic = "force-dynamic";
 
@@ -71,6 +72,16 @@ export async function POST(
   const siteDir = getSalonSiteDir(slug);
   if (!siteDir) {
     return NextResponse.json({ error: "Salon not found" }, { status: 404 });
+  }
+
+  // Path traversal guard: resolved backup path must stay inside the config dir
+  const configDir = path.join(siteDir, "config");
+  const resolvedBackupPath = path.resolve(configDir, body.backup);
+  if (!resolvedBackupPath.startsWith(path.resolve(configDir) + path.sep)) {
+    return NextResponse.json(
+      { error: "Invalid backup filename" },
+      { status: 400 }
+    );
   }
 
   const success = restoreSalonConfig(slug, body.backup);

@@ -63,7 +63,30 @@ function getDb(): Database.Database {
     );
     CREATE INDEX IF NOT EXISTS idx_reset_email   ON reset_tokens(email);
     CREATE INDEX IF NOT EXISTS idx_reset_expires ON reset_tokens(expires_at);
+
+    CREATE TABLE IF NOT EXISTS trusted_devices (
+      id         TEXT PRIMARY KEY,
+      email      TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_devices_email ON trusted_devices(email);
+
+    CREATE TABLE IF NOT EXISTS users (
+      email      TEXT PRIMARY KEY,
+      role       TEXT NOT NULL DEFAULT 'support',
+      name       TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL,
+      last_login INTEGER NOT NULL,
+      active     INTEGER NOT NULL DEFAULT 1
+    );
   `);
+
+  // Cleanup expired data on first connection
+  const now = Math.floor(Date.now() / 1000);
+  _db.prepare(`DELETE FROM sessions WHERE expires_at < ?`).run(now);
+  _db.prepare(`DELETE FROM otp_codes WHERE expires_at < ?`).run(now);
+  _db.prepare(`DELETE FROM reset_tokens WHERE expires_at < ?`).run(now);
 
   return _db;
 }
@@ -71,6 +94,8 @@ function getDb(): Database.Database {
 // ─── Sessions ────────────────────────────────────────────────────────────────
 
 export const SESSION_TTL_SECONDS = 8 * 60 * 60; // 8 hours
+export const SESSION_TTL_REMEMBER = 30 * 24 * 60 * 60; // 30 days
+export const DEVICE_TTL_SECONDS = 90 * 24 * 60 * 60; // 90 days
 
 export interface DbSession {
   id: string;
@@ -82,11 +107,12 @@ export interface DbSession {
 }
 
 /** Create a new session. Returns the session ID (set as cookie value). */
-export function createSession(email: string, role: string): string {
+export function createSession(email: string, role: string, rememberMe = false): string {
   const db = getDb();
   const id = crypto.randomBytes(32).toString("hex");
   const now = Math.floor(Date.now() / 1000);
-  const expires_at = now + SESSION_TTL_SECONDS;
+  const ttl = rememberMe ? SESSION_TTL_REMEMBER : SESSION_TTL_SECONDS;
+  const expires_at = now + ttl;
 
   db.prepare(
     `INSERT INTO sessions (id, email, role, created_at, expires_at, revoked)
@@ -189,24 +215,22 @@ export function verifyOtp(email: string, code: string): boolean {
   const db = getDb();
   const now = Math.floor(Date.now() / 1000);
 
-  const row = db.prepare(
-    `SELECT * FROM otp_codes
-     WHERE email = ? AND used = 0 AND expires_at > ?
-     ORDER BY created_at DESC LIMIT 1`
-  ).get(email.toLowerCase(), now) as DbOtp | undefined;
-
-  if (!row) return false;
-
   const codeHash = crypto
     .createHash("sha256")
     .update(code)
     .digest("hex");
 
-  if (codeHash !== row.code_hash) return false;
+  // Atomic: UPDATE WHERE used=0 AND hash matches — single statement prevents TOCTOU race
+  const result = db.prepare(
+    `UPDATE otp_codes SET used = 1
+     WHERE id = (
+       SELECT id FROM otp_codes
+       WHERE email = ? AND used = 0 AND expires_at > ? AND code_hash = ?
+       ORDER BY created_at DESC LIMIT 1
+     ) AND used = 0`
+  ).run(email.toLowerCase(), now, codeHash);
 
-  // Mark as used (single use)
-  db.prepare(`UPDATE otp_codes SET used = 1 WHERE id = ?`).run(row.id);
-  return true;
+  return result.changes > 0;
 }
 
 /** Purge expired OTP codes. */
@@ -254,11 +278,11 @@ export function createResetToken(email: string): string {
 }
 
 /**
- * Verify a raw reset token.
- * Returns the associated email if valid and not expired/used.
- * Marks the token as used after verification (single use).
+ * Validate a raw reset token WITHOUT consuming it.
+ * Returns the associated email if valid and not expired/used, null otherwise.
+ * Use this for GET requests that display the reset form — the token stays usable.
  */
-export function verifyResetToken(rawToken: string): string | null {
+export function validateResetToken(rawToken: string): string | null {
   const db = getDb();
   const now = Math.floor(Date.now() / 1000);
   const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
@@ -268,9 +292,33 @@ export function verifyResetToken(rawToken: string): string | null {
   ).get(tokenHash, now) as DbResetToken | undefined;
 
   if (!row) return null;
-
-  db.prepare(`UPDATE reset_tokens SET used = 1 WHERE id = ?`).run(row.id);
   return row.email;
+}
+
+/**
+ * Verify a raw reset token (consuming version).
+ * Returns the associated email if valid and not expired/used.
+ * Marks the token as used after verification (single use).
+ */
+export function verifyResetToken(rawToken: string): string | null {
+  const db = getDb();
+  const now = Math.floor(Date.now() / 1000);
+  const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
+
+  // Atomic: UPDATE WHERE used=0 to prevent TOCTOU race
+  const result = db.prepare(
+    `UPDATE reset_tokens SET used = 1
+     WHERE token_hash = ? AND used = 0 AND expires_at > ?`
+  ).run(tokenHash, now);
+
+  if (result.changes === 0) return null;
+
+  // Fetch the email from the now-consumed token
+  const row = db.prepare(
+    `SELECT email FROM reset_tokens WHERE token_hash = ? AND used = 1`
+  ).get(tokenHash) as { email: string } | undefined;
+
+  return row?.email ?? null;
 }
 
 // ─── OTP payload (IMS data stored at login time) ────────────────────────────
@@ -281,8 +329,10 @@ export interface ImsPayload {
 }
 
 /**
- * Get the IMS payload stored alongside the most recent unused OTP for an email.
- * Returns null if no valid OTP exists.
+ * Get the IMS payload stored alongside the most recent OTP for an email.
+ * We do NOT filter on `used` because the OTP may have just been verified
+ * (marking it used) before we can read the payload — the payload is only
+ * needed once, immediately after a successful verifyOtp().
  */
 export function getOtpPayload(email: string): ImsPayload | null {
   const db = getDb();
@@ -290,7 +340,7 @@ export function getOtpPayload(email: string): ImsPayload | null {
 
   const row = db.prepare(
     `SELECT ims_payload FROM otp_codes
-     WHERE email = ? AND used = 0 AND expires_at > ?
+     WHERE email = ? AND expires_at > ?
      ORDER BY created_at DESC LIMIT 1`
   ).get(email.toLowerCase(), now) as { ims_payload: string } | undefined;
 
@@ -301,4 +351,120 @@ export function getOtpPayload(email: string): ImsPayload | null {
   } catch {
     return null;
   }
+}
+
+// ─── Users ─────────────────────────────────────────────────────────────────
+
+const SUPER_ADMIN_EMAIL = (process.env.CMS_SUPER_ADMIN_EMAIL || "sean.nguyen@enrichco.us").toLowerCase();
+
+export type UserRole = "superadmin" | "admin" | "support";
+
+export interface DbUser {
+  email: string;
+  role: UserRole;
+  name: string;
+  created_at: number;
+  last_login: number;
+  active: number;
+}
+
+/** Get the effective role for an email. Super admin is always enforced from env. */
+export function getEffectiveRole(email: string, imsRole?: string): UserRole {
+  if (email.toLowerCase() === SUPER_ADMIN_EMAIL) return "superadmin";
+  const db = getDb();
+  const row = db.prepare(`SELECT role FROM users WHERE email = ? AND active = 1`).get(email.toLowerCase()) as { role: string } | undefined;
+  if (row) return row.role as UserRole;
+  // Fallback to IMS role for first-time users
+  if (imsRole === "admin") return "admin";
+  return "support";
+}
+
+/** Upsert a user on login. Creates if new, updates last_login if existing. */
+export function upsertUserOnLogin(email: string, role: UserRole, name?: string): void {
+  const db = getDb();
+  const now = Math.floor(Date.now() / 1000);
+  const existing = db.prepare(`SELECT email FROM users WHERE email = ?`).get(email.toLowerCase());
+  if (existing) {
+    db.prepare(`UPDATE users SET last_login = ? WHERE email = ?`).run(now, email.toLowerCase());
+  } else {
+    db.prepare(
+      `INSERT INTO users (email, role, name, created_at, last_login, active) VALUES (?, ?, ?, ?, ?, 1)`
+    ).run(email.toLowerCase(), role, name || "", now, now);
+  }
+}
+
+/** List all users. Super admin role is enforced dynamically. */
+export function listUsers(): DbUser[] {
+  const db = getDb();
+  const rows = db.prepare(`SELECT * FROM users ORDER BY created_at ASC`).all() as DbUser[];
+  return rows.map((u) => ({
+    ...u,
+    role: u.email === SUPER_ADMIN_EMAIL ? "superadmin" : u.role,
+  }));
+}
+
+/** Update a user's role. Cannot change super admin. */
+export function updateUserRole(email: string, newRole: UserRole): boolean {
+  if (email.toLowerCase() === SUPER_ADMIN_EMAIL) return false; // Can't change super admin
+  if (newRole === "superadmin") return false; // Can't promote to super admin
+  const db = getDb();
+  const result = db.prepare(`UPDATE users SET role = ? WHERE email = ? AND active = 1`).run(newRole, email.toLowerCase());
+  return result.changes > 0;
+}
+
+/** Deactivate a user (soft delete). Cannot deactivate super admin. */
+export function deactivateUser(email: string): boolean {
+  if (email.toLowerCase() === SUPER_ADMIN_EMAIL) return false;
+  const db = getDb();
+  const result = db.prepare(`UPDATE users SET active = 0 WHERE email = ?`).run(email.toLowerCase());
+  return result.changes > 0;
+}
+
+/** Reactivate a user. */
+export function reactivateUser(email: string): boolean {
+  const db = getDb();
+  const result = db.prepare(`UPDATE users SET active = 1 WHERE email = ?`).run(email.toLowerCase());
+  return result.changes > 0;
+}
+
+/** Check if an email is the super admin. */
+export function isSuperAdmin(email: string): boolean {
+  return email.toLowerCase() === SUPER_ADMIN_EMAIL;
+}
+
+// ─── Trusted Devices ───────────────────────────────────────────────────────
+
+/** Trust a device for an email. Returns the device token (set as cookie). */
+export function trustDevice(email: string): string {
+  const db = getDb();
+  const id = crypto.randomBytes(32).toString("hex");
+  const now = Math.floor(Date.now() / 1000);
+  const expires_at = now + DEVICE_TTL_SECONDS;
+  db.prepare(
+    `INSERT INTO trusted_devices (id, email, created_at, expires_at) VALUES (?, ?, ?, ?)`
+  ).run(id, email.toLowerCase(), now, expires_at);
+  return id;
+}
+
+/** Check if a device token is valid for an email. */
+export function isDeviceTrusted(deviceId: string, email: string): boolean {
+  const db = getDb();
+  const now = Math.floor(Date.now() / 1000);
+  const row = db.prepare(
+    `SELECT id FROM trusted_devices WHERE id = ? AND email = ? AND expires_at > ?`
+  ).get(deviceId, email.toLowerCase(), now);
+  return !!row;
+}
+
+/** Invite (pre-register) a user with a role. Returns false if already exists. */
+export function inviteUser(email: string, role: UserRole, name?: string): boolean {
+  if (role === "superadmin") return false;
+  const db = getDb();
+  const existing = db.prepare(`SELECT email FROM users WHERE email = ?`).get(email.toLowerCase());
+  if (existing) return false;
+  const now = Math.floor(Date.now() / 1000);
+  db.prepare(
+    `INSERT INTO users (email, role, name, created_at, last_login, active) VALUES (?, ?, ?, ?, 0, 1)`
+  ).run(email.toLowerCase(), role, name || "", now);
+  return true;
 }

@@ -85,12 +85,11 @@ fi
 echo "[2/5] Packaging..."
 TAR_FILE="/tmp/cms-build-$(date +%s).tar.gz"
 tar -czf "$TAR_FILE" \
-  out/ \
+  .next/standalone/ \
+  .next/static/ \
   public/ \
-  node_modules/ \
-  package.json \
-  package-lock.json \
-  .env.production 2>/dev/null || true
+  --exclude='*.node' \
+  2>/dev/null || { echo "ERROR: tar failed"; exit 1; }
 
 echo "✓ Created $TAR_FILE"
 PREV_TAR="/tmp/cms-build-previous.tar.gz"
@@ -161,7 +160,7 @@ User=aisquad
 Group=aisquad
 WorkingDirectory=/opt/enrich-cms
 EnvironmentFile=/opt/enrich-cms/.env.production
-ExecStart=/usr/bin/node /opt/enrich-cms/out/server.js
+ExecStart=/usr/bin/node /opt/enrich-cms/.next/standalone/server.js
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal

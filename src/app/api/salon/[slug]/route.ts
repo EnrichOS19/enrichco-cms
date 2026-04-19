@@ -31,11 +31,14 @@ export async function PUT(
 
   const { slug } = await params;
 
-  // Capture old config for diff
-  const existing = getSalonConfig(slug);
-  const oldConfig = existing?.config ?? null;
+  // Parse body safely
+  let config: unknown;
+  try {
+    config = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
 
-  const config = await request.json();
   const parsed = salonSchema.safeParse(config);
 
   if (!parsed.success) {
@@ -48,12 +51,22 @@ export async function PUT(
     );
   }
 
+  // Dry-run mode: validate only, don't save (used by preflight check)
+  const isDryRun = request.headers.get("X-Dry-Run") === "true";
+  if (isDryRun) {
+    return NextResponse.json({ ok: true, dryRun: true });
+  }
+
+  // Capture old config for diff
+  const existing = getSalonConfig(slug);
+  const oldConfig = existing?.config ?? null;
+
   const success = saveSalonConfig(slug, parsed.data);
   if (!success) {
     return NextResponse.json({ error: "Failed to save" }, { status: 500 });
   }
 
-  // Phase 3B: audit log the save with a diff of changed fields
+  // Audit log with diff of changed fields
   const diff: Record<string, [unknown, unknown]> = {};
   if (oldConfig) {
     for (const key of Object.keys(parsed.data) as (keyof typeof parsed.data)[]) {
