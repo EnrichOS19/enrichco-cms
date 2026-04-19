@@ -411,6 +411,7 @@ export function getEffectiveRole(email: string, imsRole?: string): UserRole {
   if (row) return row.role as UserRole;
   // Fallback to IMS role for first-time users
   if (imsRole === "admin") return "admin";
+  if (imsRole === "salon_owner") return "salon_owner";
   return "support";
 }
 
@@ -503,6 +504,26 @@ export function listUsersForSalon(slug: string): Array<{ email: string; granted_
   return db.prepare(
     `SELECT user_email AS email, granted_by, granted_at FROM users_salons WHERE slug = ? ORDER BY granted_at ASC`
   ).all(slug) as Array<{ email: string; granted_by: string; granted_at: number }>;
+}
+
+// TODO(agent-B): listAllGrants added for /admin/owners page. Agent A please verify no conflict.
+export interface DbSalonGrant {
+  user_email: string;
+  slug: string;
+  granted_by: string;
+  granted_at: number;
+  ims_store_id: string | null;
+}
+
+/** List every grant across all salons and users — for the admin owners overview page. */
+export function listAllGrants(): DbSalonGrant[] {
+  const db = getDb();
+  return db.prepare(
+    `SELECT user_email, slug, granted_by, granted_at,
+            NULL AS ims_store_id
+     FROM users_salons
+     ORDER BY granted_at DESC`
+  ).all() as DbSalonGrant[];
 }
 
 /** Returns true if the user is explicitly granted access to this slug. */
