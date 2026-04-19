@@ -162,7 +162,26 @@ export const salonSchema = z.object({
   websiteManager: z.enum(["ai-team", "marketing-team"]).optional(),
 }).passthrough();
 
+/**
+ * Strict variant for salon_owner PUT requests.
+ *
+ * Protected fields (siteStatus, domain, stagingDomain, domainOwnership,
+ * websiteManager, currentTemplate) are stripped by the route handler
+ * BEFORE reaching this schema. This schema then rejects any remaining
+ * unknown keys so no unexpected fields can sneak through.
+ */
+export const ownerSalonSchema = salonSchema
+  .omit({
+    siteStatus: true,
+    domain: true,
+    stagingDomain: true,
+    domainOwnership: true,
+    websiteManager: true,
+  })
+  .strict();
+
 export type SalonInput = z.infer<typeof salonSchema>;
+export type OwnerSalonInput = z.infer<typeof ownerSalonSchema>;
 
 export function flattenZodErrors(error: z.ZodError) {
   return error.issues.map((issue) => ({

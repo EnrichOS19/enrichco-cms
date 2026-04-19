@@ -1,10 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import { configEtag, getSalonConfig, saveSalonConfig } from "@/lib/salons";
-import { flattenZodErrors, salonSchema } from "@/lib/schemas/salon";
+import { flattenZodErrors, salonSchema, ownerSalonSchema } from "@/lib/schemas/salon";
 import { requireSalonAccess } from "@/lib/auth";
 import { logEvent } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
+
+/**
+ * Fields salon_owner cannot set via PUT.
+ * Admin/superadmin/support may set any field.
+ */
+const OWNER_PROTECTED_FIELDS = [
+  "siteStatus",
+  "domain",
+  "stagingDomain",
+  "domainOwnership",
+  "websiteManager",
+  "currentTemplate",
+] as const;
 
 export async function GET(
   request: NextRequest,
@@ -34,20 +47,38 @@ export async function PUT(
   const { session } = auth;
 
   // Parse body safely
-  let config: unknown;
+  let rawBody: Record<string, unknown>;
   try {
-    config = await request.json();
+    rawBody = await request.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const parsed = salonSchema.safeParse(config);
+  const isOwner = session.role === "salon_owner";
 
-  if (!parsed.success) {
+  let config: unknown;
+  let parseResult: ReturnType<typeof salonSchema.safeParse>;
+
+  if (isOwner) {
+    // Strip protected fields before validation — owner cannot escalate
+    const stripped: Record<string, unknown> = { ...rawBody };
+    for (const field of OWNER_PROTECTED_FIELDS) {
+      delete stripped[field];
+    }
+    // Use strict schema — unknown keys are rejected (closes Codex's .passthrough hole)
+    parseResult = ownerSalonSchema.safeParse(stripped);
+    config = stripped;
+  } else {
+    // Admin/staff: full schema with passthrough
+    parseResult = salonSchema.safeParse(rawBody);
+    config = rawBody;
+  }
+
+  if (!parseResult.success) {
     return NextResponse.json(
       {
         error: "Validation failed",
-        issues: flattenZodErrors(parsed.error),
+        issues: flattenZodErrors(parseResult.error),
       },
       { status: 400 }
     );
@@ -64,7 +95,6 @@ export async function PUT(
   const oldConfig = existing?.config ?? null;
 
   // Optimistic concurrency: if client sent If-Match, compare against current etag.
-  // Clients that don't send If-Match still save (soft rollout) but a diagnostic header is returned.
   const ifMatch = request.headers.get("If-Match");
   if (ifMatch && oldConfig) {
     const currentEtag = configEtag(oldConfig);
@@ -79,7 +109,7 @@ export async function PUT(
     }
   }
 
-  const success = saveSalonConfig(slug, parsed.data);
+  const success = saveSalonConfig(slug, parseResult.data);
   if (!success) {
     return NextResponse.json({ error: "Failed to save" }, { status: 500 });
   }
@@ -87,9 +117,9 @@ export async function PUT(
   // Audit log with diff of changed fields
   const diff: Record<string, [unknown, unknown]> = {};
   if (oldConfig) {
-    for (const key of Object.keys(parsed.data) as (keyof typeof parsed.data)[]) {
+    for (const key of Object.keys(parseResult.data) as (keyof typeof parseResult.data)[]) {
       const oldVal = (oldConfig as Record<string, unknown>)[key as string];
-      const newVal = parsed.data[key];
+      const newVal = parseResult.data[key];
       if (JSON.stringify(oldVal) !== JSON.stringify(newVal)) {
         diff[key as string] = [oldVal, newVal];
       }
@@ -103,7 +133,7 @@ export async function PUT(
     diff: Object.keys(diff).length > 0 ? JSON.stringify(diff) : undefined,
   });
 
-  const newEtag = configEtag(parsed.data);
+  const newEtag = configEtag(parseResult.data);
   return NextResponse.json({ ok: true, etag: newEtag }, {
     headers: { ETag: newEtag },
   });
