@@ -149,36 +149,62 @@ export async function buildAndDeploy(
 
     // Step 5a — Compute deploy hash from the out/ contents BEFORE tarring,
     // so we can write a fingerprint file INTO the deploy (verified post-deploy).
-    // Hash over the file list + sizes + mtimes gives a stable per-build value
-    // that changes whenever content changes.
+    //
+    // CONTENT-based hash: sha256 per file's bytes, combined into a top-level
+    // hash over `relpath\0sha256\n` sorted lines. Two builds that edit copy
+    // without changing file count or any file's byte length (e.g. "Jane"→
+    // "Mary", swap one booking id for another same-length id) MUST produce
+    // distinct hashes, otherwise cache-busters can't tell builds apart.
+    // Path + size alone would miss those and let stale caches masquerade
+    // as fresh deploys (caught in PR #1 adversarial review).
     const outDirSrc = path.join(tmpDir, "out");
-    const hashSource = await execFileAsync(
+    const manifest = await execFileAsync(
       "sh",
-      ["-c", `find . -type f -printf '%P %s\\n' | sort`],
-      { cwd: outDirSrc, timeout: 15000 }
+      // `-print0` + xargs `-0 -I{}` handles paths with spaces/newlines safely.
+      // sha256sum output is `<hex>  <path>`; we reformat to `<relpath>\0<hex>\n`
+      // so the top-level hash is insensitive to sha256sum's stable sort order.
+      [
+        "-c",
+        `find . -type f -print0 | sort -z | xargs -0 sha256sum | awk '{ h=$1; $1=""; p=substr($0,3); printf "%s\\0%s\\n", p, h }'`,
+      ],
+      { cwd: outDirSrc, timeout: 60000, maxBuffer: 50 * 1024 * 1024 }
     );
     const deployHash = crypto
       .createHash("sha256")
-      .update(hashSource.stdout)
+      .update(manifest.stdout)
       .digest("hex")
       .slice(0, 16);
 
-    // Step 5a.5 — Post-build content check. Walk every .html in out/ and
-    // abort if any placeholder sentinel leaked into the rendered output.
-    // Catches template-level hardcodes (not source data — that was guarded
-    // at step 0) that would produce a broken iframe/link on the live site.
-    const buildHtmlFiles = (
-      await execFileAsync("find", [outDirSrc, "-type", "f", "-name", "*.html"], {
-        timeout: 10000,
-      })
+    // Step 5a.5 — Post-build content check. Walk every text asset in out/
+    // and abort if any placeholder sentinel leaked into the rendered output.
+    //
+    // .html alone isn't enough: Next.js static exports also emit
+    // `.txt` RSC payloads (rendered salon content for client navigation),
+    // `.js` client chunks (which can inline template string literals),
+    // `.json` manifests, `.css`, and `.svg`. Any of those could contain a
+    // sentinel if a template component hardcoded one. Catching HTML only
+    // would let the sentinel leak to RSC fetches on client-side navigation
+    // (caught in PR #1 adversarial review).
+    const textExtensions = [
+      "*.html", "*.htm", "*.txt", "*.js", "*.mjs", "*.json", "*.xml",
+      "*.css", "*.svg", "*.webmanifest", "*.rsc"
+    ];
+    const findArgs = [outDirSrc, "-type", "f", "("];
+    textExtensions.forEach((ext, i) => {
+      if (i > 0) findArgs.push("-o");
+      findArgs.push("-name", ext);
+    });
+    findArgs.push(")");
+    const buildTextFiles = (
+      await execFileAsync("find", findArgs, { timeout: 15000 })
     ).stdout
       .split("\n")
       .filter((p) => p.trim().length > 0);
-    for (const htmlPath of buildHtmlFiles) {
-      const html = fs.readFileSync(htmlPath, "utf-8");
-      const match = html.match(PLACEHOLDER_PATTERN);
+    for (const filePath of buildTextFiles) {
+      const content = fs.readFileSync(filePath, "utf-8");
+      const match = content.match(PLACEHOLDER_PATTERN);
       if (match) {
-        const rel = path.relative(outDirSrc, htmlPath);
+        const rel = path.relative(outDirSrc, filePath);
         throw new Error(
           `Publish blocked — built ${rel} contains a placeholder sentinel (${JSON.stringify(match[0])}). ` +
             `This usually means a template component hardcoded a seed value. ` +
@@ -186,7 +212,7 @@ export async function buildAndDeploy(
         );
       }
     }
-    steps.push(`Post-build: ${buildHtmlFiles.length} HTML files scanned, no placeholders`);
+    steps.push(`Post-build: ${buildTextFiles.length} text assets scanned, no placeholders`);
 
     // Step 5b — Write fingerprint file. Post-deploy verification fetches this
     // from the live URL to confirm the build we just produced is what users
@@ -235,6 +261,21 @@ export async function buildAndDeploy(
     if (fs.existsSync(outDir)) await execFileAsync("mv", [outDir, publicDir], { timeout: 10000 });
 
     try { await execFileAsync("chmod", ["-R", "a+rX", publicDir], { timeout: 15000 }); } catch {}
+
+    // Step 6a — Record expected hash for Layer 4 drift-check cron. The
+    // cron reads /var/log/cms-drift/expected-hashes.tsv and alerts when
+    // live URL's /deploy.json hash doesn't match the last row per slug.
+    // Best-effort: failures here must not block a successful deploy.
+    try {
+      const driftDir = "/var/log/cms-drift";
+      if (fs.existsSync(driftDir)) {
+        const row = `${slug}\t${deployHash}\t${domainLower}\t${new Date().toISOString()}\n`;
+        fs.appendFileSync(path.join(driftDir, "expected-hashes.tsv"), row);
+      }
+    } catch (err) {
+      // Drift baseline recording is non-critical. Log and move on.
+      console.error(`[publish] failed to record expected hash: ${(err as Error).message}`);
+    }
 
     steps.push("Deployed");
 

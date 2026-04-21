@@ -6,17 +6,25 @@ const timeRegex = /^([0]?[1-9]|1[0-2]):[0-5]\d\s?(AM|PM)$/i;
 const colorRegex = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 const domainRegex = /^[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z]{2,}$/;
 
-// Seed/placeholder sentinel values — onboarding inserts things like
-// "VENUS_PLACEHOLDER" or "COMING_SOON" that are meant to be overwritten
-// with real data. If a salon.json field still contains one of these at
-// save time, the user is trying to publish a fake URL/value to the live
-// site. Reject loudly on PUT; buildAndDeploy also asserts before next build.
-export const PLACEHOLDER_PATTERN = /(_PLACEHOLDER|COMING[_ ]SOON|REPLACE[_ ]ME|TODO|FIXME|XXX_)/i;
-const notPlaceholder = (label: string) =>
-  (val: string) => !PLACEHOLDER_PATTERN.test(val) ||
-    ({
-      message: `${label} contains a seed/placeholder sentinel ("${val}"). Replace with the real value before saving.`,
-    } as never);
+// Seed/placeholder sentinel values — onboarding scripts insert values like
+// "VENUS_PLACEHOLDER" or "COMING_SOON" that are meant to be overwritten with
+// real data before launch. If a salon.json field still contains one of these
+// at save or publish time, we must block: otherwise fake URLs reach live
+// users (e.g. Venus Nail Spa's booking iframe rendered `id=VENUS_PLACEHOLDER`
+// and Mango returned "Store Not Exist").
+//
+// The pattern intentionally matches ONLY the exact onboarding sentinels —
+// not natural-language words. Earlier broader tokens (`TODO`, `FIXME`,
+// bare `COMING SOON` with a space) were rejected in code review because
+// they would false-positive on legitimate salon copy: Spanish `todo`,
+// English "new location coming soon", URL `?utm=todo`, etc. All sentinels
+// below are all-caps compound strings that do not appear in real content.
+//
+//   *_PLACEHOLDER   — e.g. VENUS_PLACEHOLDER, BOUJEE_PLACEHOLDER
+//   REPLACE_ME      — generic onboarding marker
+//   COMING_SOON     — with underscore (not the English phrase)
+//   XXX_*           — dev-marker prefix
+export const PLACEHOLDER_PATTERN = /(_PLACEHOLDER\b|\bREPLACE_ME\b|\bCOMING_SOON\b|\bXXX_[A-Z0-9_]+)/;
 
 // Flexible URL — accepts with or without protocol, or empty.
 // Rejects placeholder sentinels so fake seeds can't get persisted.

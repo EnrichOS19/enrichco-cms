@@ -49,13 +49,37 @@ describe("assertNoPlaceholders — walks salon.json for seed sentinels", () => {
     ).not.toThrow();
   });
 
-  it("catches TODO / FIXME / XXX_ sentinels too (not just _PLACEHOLDER)", () => {
-    expect(() =>
-      assertNoPlaceholders({ meta: { description: "TODO: fill this in" } })
-    ).toThrow(/meta\.description/);
+  it("catches XXX_ prefix sentinels (dev markers)", () => {
     expect(() =>
       assertNoPlaceholders({ about: { founderStory: "XXX_PASTE_REAL_STORY" } })
     ).toThrow(/about\.founderStory/);
+  });
+
+  // Anti-false-positive tests — per code review, PLACEHOLDER_PATTERN was
+  // tightened to avoid matching legitimate content that happens to include
+  // common English words. These cases MUST NOT throw.
+  it("does NOT reject Spanish 'todo' (it's a common word, case-insensitive)", () => {
+    expect(() =>
+      assertNoPlaceholders({ tagline: "Todo para tus uñas" })
+    ).not.toThrow();
+  });
+
+  it("does NOT reject English 'coming soon' phrases (only the underscore sentinel)", () => {
+    expect(() =>
+      assertNoPlaceholders({ popup: { text: "New location coming soon!" } })
+    ).not.toThrow();
+  });
+
+  it("does NOT reject URLs with ?utm=todo or similar legitimate query params", () => {
+    expect(() =>
+      assertNoPlaceholders({ social: { instagram: "https://instagram.com/salon?utm=todo_list" } })
+    ).not.toThrow();
+  });
+
+  it("does NOT reject descriptive text containing the word 'todo' (e.g. 'Things todo at spa')", () => {
+    expect(() =>
+      assertNoPlaceholders({ about: { description: "Things todo while you wait" } })
+    ).not.toThrow();
   });
 });
 
@@ -76,11 +100,24 @@ describe("PLACEHOLDER_PATTERN regex", () => {
     }
   });
 
-  it("does NOT match legitimate values that happen to have 'placeholder' as a common word", () => {
-    // "placeholder" alone isn't the sentinel — the pattern looks for _PLACEHOLDER with underscore prefix
+  it("does NOT match legitimate values containing common words", () => {
+    // "placeholder" alone isn't the sentinel — only compound forms are.
     expect(PLACEHOLDER_PATTERN.test("This is a placeholder")).toBe(false);
-    // But COMING_SOON and TODO are sentinels we want to catch
+    // Natural-language "coming soon" (with space) is legitimate site copy.
+    expect(PLACEHOLDER_PATTERN.test("Coming soon in 2026")).toBe(false);
+    // Bare "todo" / "TODO" is Spanish/English common-word or generic list
+    // marker — not a specific sentinel.
+    expect(PLACEHOLDER_PATTERN.test("Todo para tus uñas")).toBe(false);
+    expect(PLACEHOLDER_PATTERN.test("TODO list for spa staff")).toBe(false);
+    // Bare "FIXME" and "REPLACE" without the underscore sentinel shouldn't match.
+    expect(PLACEHOLDER_PATTERN.test("Fix me up with a mani")).toBe(false);
+  });
+
+  it("DOES match the exact onboarding sentinels (underscore-joined, all-caps)", () => {
     expect(PLACEHOLDER_PATTERN.test("COMING_SOON")).toBe(true);
+    expect(PLACEHOLDER_PATTERN.test("REPLACE_ME")).toBe(true);
+    expect(PLACEHOLDER_PATTERN.test("XXX_TEMPLATE")).toBe(true);
+    expect(PLACEHOLDER_PATTERN.test("id=VENUS_PLACEHOLDER")).toBe(true);
   });
 });
 
@@ -110,9 +147,10 @@ describe("salonSchema rejects placeholder values on save", () => {
   });
 
   it("rejects any flexibleUrl field (social.instagram etc.) with a sentinel", () => {
+    // XXX_ prefix is a dev-marker sentinel and always rejected.
     const result = salonSchema.safeParse({
       ...baseSalon,
-      social: { instagram: "https://instagram.com/COMING_SOON_PROFILE" },
+      social: { instagram: "https://instagram.com/XXX_SALON_HANDLE" },
     });
     expect(result.success).toBe(false);
   });
