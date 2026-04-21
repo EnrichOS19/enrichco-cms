@@ -6,11 +6,45 @@ const timeRegex = /^([0]?[1-9]|1[0-2]):[0-5]\d\s?(AM|PM)$/i;
 const colorRegex = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 const domainRegex = /^[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z]{2,}$/;
 
-// Flexible URL — accepts with or without protocol, or empty
+// Seed/placeholder sentinel values — onboarding scripts insert values like
+// "VENUS_PLACEHOLDER" or "COMING_SOON" that are meant to be overwritten with
+// real data before launch. If a salon.json field still contains one of these
+// at save or publish time, we must block: otherwise fake URLs reach live
+// users (e.g. Venus Nail Spa's booking iframe rendered `id=VENUS_PLACEHOLDER`
+// and Mango returned "Store Not Exist").
+//
+// The pattern intentionally matches ONLY the exact onboarding sentinels —
+// not natural-language words. Earlier broader tokens (`TODO`, `FIXME`,
+// bare `COMING SOON` with a space) were rejected in code review because
+// they would false-positive on legitimate salon copy: Spanish `todo`,
+// English "new location coming soon", URL `?utm=todo`, etc. All sentinels
+// below are all-caps compound strings that do not appear in real content.
+//
+//   *_PLACEHOLDER       — e.g. VENUS_PLACEHOLDER, BOUJEE_PLACEHOLDER
+//   *_PLACEHOLDER_*     — suffix variants, e.g. VENUS_PLACEHOLDER_URL
+//   REPLACE_ME          — generic onboarding marker
+//   COMING_SOON         — with underscore (not the English phrase)
+//   XXX_*               — dev-marker prefix
+//
+// The _PLACEHOLDER anchor allows:
+//   - multi-word prefixes (FIZZ_WAXING_PLACEHOLDER — prefix class is
+//     [A-Z0-9_]* so underscores in the name are fine)
+//   - optional trailing `_SUFFIX` (VENUS_PLACEHOLDER_URL — `_` is a word
+//     char, so a plain `\b` after PLACEHOLDER alone would miss these)
+// The leading `[A-Z0-9]` (one required all-caps/digit char) prevents the
+// pattern from matching the bare English word "placeholder".
+export const PLACEHOLDER_PATTERN = /(\b[A-Z0-9][A-Z0-9_]*_PLACEHOLDER(?:_[A-Z0-9_]+)*\b|\bREPLACE_ME\b|\bCOMING_SOON\b|\bXXX_[A-Z0-9_]+)/;
+
+// Flexible URL — accepts with or without protocol, or empty.
+// Rejects placeholder sentinels so fake seeds can't get persisted.
 const flexibleUrl = z
   .string()
   .trim()
   .max(500)
+  .refine(
+    (v) => v === "" || !PLACEHOLDER_PATTERN.test(v),
+    { message: "URL contains a placeholder sentinel (e.g. _PLACEHOLDER). Enter the real URL or leave blank." }
+  )
   .optional()
   .or(z.literal(""));
 
@@ -120,9 +154,21 @@ export const salonSchema = z.object({
     google: flexibleUrl,
   }).optional(),
   booking: z.object({
-    url: z.string().trim().max(500).optional().or(z.literal("")),
+    // Placeholder sentinels (e.g. "*_PLACEHOLDER") are rejected so fake
+    // seeds from onboarding can't be persisted or published. Empty is
+    // allowed — the site template renders a "booking coming soon" state
+    // until a real URL is provided.
+    url: z
+      .string()
+      .trim()
+      .max(500)
+      .refine(
+        (v) => v === "" || !PLACEHOLDER_PATTERN.test(v),
+        { message: "Booking URL is a placeholder (e.g. VENUS_PLACEHOLDER). Enter the real URL from Mango or leave blank." }
+      )
+      .optional()
+      .or(z.literal("")),
     provider: z.string().trim().max(80).optional().or(z.literal("")),
-    placeholder: z.boolean().optional(),
     label: z.string().trim().max(100).optional().or(z.literal("")),
   }).optional(),
   branding: z.object({

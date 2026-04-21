@@ -5,7 +5,7 @@ import { randomUUID } from "crypto";
 import { requireSession, requireSuperAdmin } from "@/lib/auth";
 import { logEvent } from "@/lib/audit";
 import { getAllSalons, getSalonSiteDir, getSalonConfig } from "@/lib/salons";
-import { buildAndDeploy, publishLocks } from "@/lib/publish";
+import { buildAndDeploy, publishLocks, verifyLiveDeploy } from "@/lib/publish";
 
 export const dynamic = "force-dynamic";
 
@@ -65,6 +65,23 @@ async function runRebuildJob(slugs: string[], jobId: string, dryRun: boolean) {
       if (!domain) throw new Error("No production domain configured");
 
       const result = await buildAndDeploy(siteDir, domain, slug, dryRun);
+
+      // Post-deploy live-URL verification (skipped for dry runs — no deploy happened).
+      // Records verify status per salon so the batch result surfaces drift
+      // instead of reporting false-positive success.
+      if (!dryRun) {
+        const verification = await verifyLiveDeploy(result.domain, result.deployHash);
+        if (!verification.verified) {
+          status.failed++;
+          status.results.push({
+            slug,
+            ok: false,
+            deployHash: result.deployHash,
+            error: `Built+deployed, but live URL did not reflect it (${verification.reason}). ${verification.hint}`,
+          });
+          continue;
+        }
+      }
 
       status.completed++;
       status.results.push({ slug, ok: true, deployHash: result.deployHash });

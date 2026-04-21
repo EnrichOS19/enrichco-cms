@@ -336,10 +336,21 @@ export default function SalonEditorPage() {
     try {
       const res = await fetch(`/api/salon/${slug}/publish`, { method: "POST" });
       const data = await res.json();
-      if (!res.ok) {
-        toast(data.message || "Publish failed", "error");
+      if (res.status === 502 && data?.verified === false) {
+        // Build + deploy succeeded on our server, but the live URL is not
+        // serving the new build. This is the class of bug where editors
+        // think they published but users see stale content. Do NOT say success.
+        toast(
+          `Publish did NOT reach live users (${data.reason}). ${data.hint ?? ""}`,
+          "error"
+        );
+      } else if (!res.ok) {
+        toast(data.message || data.error || "Publish failed", "error");
       } else {
-        toast("Live site updated!", "success");
+        toast(
+          `Live site updated — verified reachable (build ${data.deploy_hash})`,
+          "success"
+        );
       }
     } catch {
       toast("Publish failed", "error");
@@ -387,16 +398,30 @@ export default function SalonEditorPage() {
 
       // 2. Build + deploy to staging
       const res = await fetch(`/api/salon/${slug}/publish?target=staging`, { method: "POST" });
-      const data = await res.json().catch(() => ({}));
+      const data = await res.json().catch(() => ({} as Record<string, unknown>));
+      if (res.status === 502 && data?.verified === false) {
+        // Staging build succeeded but live URL doesn't reflect it. Don't
+        // silently pop open a stale preview — tell the user so they can fix
+        // the config (usually staging DNS or staging dir pathing).
+        toast(
+          `Preview built but did NOT reach ${stagingDomain} (${data.reason}). ${data.hint ?? ""}`,
+          "error"
+        );
+        previewWin.close();
+        return;
+      }
       if (!res.ok) {
-        toast(data.message || "Preview build failed", "error");
+        toast(
+          (data.message as string) || (data.error as string) || "Preview build failed",
+          "error"
+        );
         previewWin.close();
         return;
       }
 
       // 3. Navigate the already-open window to the fresh staging site
       previewWin.location.href = `https://${stagingDomain}`;
-      toast("Preview ready!", "success");
+      toast("Preview ready — verified reachable!", "success");
     } catch {
       toast("Preview build failed", "error");
       previewWin.close();

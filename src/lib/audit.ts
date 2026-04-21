@@ -47,7 +47,7 @@ function getDb(): Database.Database {
   return db;
 }
 
-export type AuditAction = "save" | "publish" | "publish_staging" | "publish_production" | "upload" | "rollback" | "restore" | "template_switch" | "template_component_update" | "template_batch_patch" | "template_rebuild_all" | "template_rebuild_dry_run" | "salon_access_grant" | "salon_access_revoke";
+export type AuditAction = "save" | "publish" | "publish_staging" | "publish_production" | "publish_verify_failed_prod" | "publish_verify_failed_staging" | "upload" | "rollback" | "restore" | "template_switch" | "template_component_update" | "template_batch_patch" | "template_rebuild_all" | "template_rebuild_dry_run" | "salon_access_grant" | "salon_access_revoke";
 
 export interface AuditEntry {
   id: string;

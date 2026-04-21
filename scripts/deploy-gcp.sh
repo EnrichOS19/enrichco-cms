@@ -50,26 +50,26 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-echo \"=== CMS Deployment to GCP ===\"
-echo \"Project: $GCP_PROJECT\"
-echo \"Instance: $GCP_INSTANCE ($GCP_ZONE)\"
-echo \"Target: $CMS_HOME\"
-echo \"\"
+echo "=== CMS Deployment to GCP ==="
+echo "Project: $GCP_PROJECT"
+echo "Instance: $GCP_INSTANCE ($GCP_ZONE)"
+echo "Target: $CMS_HOME"
+echo ""
 
 # Pre-flight check: Verify .env.production exists and is NOT in the tarball
-if [ ! -f \".env.production\" ]; then
-  echo \"ERROR: .env.production not found in current directory\"
-  echo \"This file must exist locally and will be deployed separately via EnvironmentFile\"
-  echo \"\"
-  echo \"Create .env.production with:\"
-  echo \"  CMS_SESSION_SECRET=<strong-random-secret-min-32-chars>\"
-  echo \"  NODE_ENV=production\"
-  echo \"\"
+if [ ! -f ".env.production" ]; then
+  echo "ERROR: .env.production not found in current directory"
+  echo "This file must exist locally and will be deployed separately via EnvironmentFile"
+  echo ""
+  echo "Create .env.production with:"
+  echo "  CMS_SESSION_SECRET=<strong-random-secret-min-32-chars>"
+  echo "  NODE_ENV=production"
+  echo ""
   exit 1
 fi
 
-echo \"✓ Pre-flight checks passed\"
-echo \"\"
+echo "✓ Pre-flight checks passed"
+echo ""
 
 # Step 1: Build (unless --skip-build)
 if [ "$SKIP_BUILD" = false ]; then
@@ -84,12 +84,13 @@ fi
 # Step 2: Create tarball
 echo "[2/5] Packaging..."
 TAR_FILE="/tmp/cms-build-$(date +%s).tar.gz"
-tar -czf "$TAR_FILE" \
+# --exclude must come BEFORE source paths on BSD tar (macOS); GNU tar
+# accepts either order. Put it first for portability.
+tar --exclude='*.node' -czf "$TAR_FILE" \
   .next/standalone/ \
   .next/static/ \
   public/ \
-  --exclude='*.node' \
-  2>/dev/null || { echo "ERROR: tar failed"; exit 1; }
+  || { echo "ERROR: tar failed"; exit 1; }
 
 echo "✓ Created $TAR_FILE"
 PREV_TAR="/tmp/cms-build-previous.tar.gz"

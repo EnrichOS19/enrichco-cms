@@ -1,0 +1,14 @@
+[Unit]
+Description=Run CMS drift guard hourly
+
+[Timer]
+# 5 minutes after boot, then every hour thereafter. 2-minute random
+# jitter so repeated restarts don't cluster requests.
+OnBootSec=5min
+OnUnitActiveSec=1h
+RandomizedDelaySec=2min
+Persistent=true
+Unit=cms-drift-check.service
+
+[Install]
+WantedBy=timers.target
