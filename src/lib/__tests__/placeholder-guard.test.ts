@@ -119,6 +119,15 @@ describe("PLACEHOLDER_PATTERN regex", () => {
     expect(PLACEHOLDER_PATTERN.test("XXX_TEMPLATE")).toBe(true);
     expect(PLACEHOLDER_PATTERN.test("id=VENUS_PLACEHOLDER")).toBe(true);
   });
+
+  it("catches suffixed _PLACEHOLDER variants (Codex follow-up finding)", () => {
+    // Underscore is a word character, so a plain \b after PLACEHOLDER
+    // fails on VENUS_PLACEHOLDER_URL. Pattern explicitly allows
+    // `(?:_[A-Z0-9]+)*` suffix so seed variants are all caught.
+    expect(PLACEHOLDER_PATTERN.test("VENUS_PLACEHOLDER_URL")).toBe(true);
+    expect(PLACEHOLDER_PATTERN.test("BOUJEE_PLACEHOLDER_ID")).toBe(true);
+    expect(PLACEHOLDER_PATTERN.test("FIZZ_PLACEHOLDER_HANDLE_V2")).toBe(true);
+  });
 });
 
 describe("salonSchema rejects placeholder values on save", () => {

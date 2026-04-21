@@ -9,8 +9,11 @@
 #
 # Expected hashes are maintained at /var/log/cms-drift/expected-hashes.tsv
 # (format: `slug\thash\tdomain\ttimestamp`). buildAndDeploy() appends a row
-# after every successful verifyLiveDeploy(). If a salon has no recorded
-# expected hash yet (never published via new pipeline), we report it as
+# immediately after the atomic public/ swap completes (before the publish
+# route's verifyLiveDeploy() runs). If verify later fails, the live URL
+# won't match the recorded hash — which is exactly what drift-check is
+# supposed to catch on the next tick. If a salon has no recorded expected
+# hash yet (never published via new pipeline), we report it as
 # "no_baseline" — not a drift failure, a setup gap.
 #
 # Runs hourly via /etc/systemd/system/cms-drift-check.timer.

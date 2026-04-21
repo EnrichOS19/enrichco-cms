@@ -187,7 +187,11 @@ export async function buildAndDeploy(
     // (caught in PR #1 adversarial review).
     const textExtensions = [
       "*.html", "*.htm", "*.txt", "*.js", "*.mjs", "*.json", "*.xml",
-      "*.css", "*.svg", "*.webmanifest", "*.rsc"
+      "*.css", "*.svg", "*.webmanifest", "*.rsc",
+      // Source maps — only present when productionBrowserSourceMaps is on
+      // in next.config, but scan defensively so a future config change can't
+      // leak a sentinel string unchecked.
+      "*.map"
     ];
     const findArgs = [outDirSrc, "-type", "f", "("];
     textExtensions.forEach((ext, i) => {
