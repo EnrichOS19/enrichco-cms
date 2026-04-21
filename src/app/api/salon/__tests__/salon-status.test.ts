@@ -12,7 +12,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import fs from "fs";
-import { readLatestExpectedHash, fetchLiveHash } from "../[slug]/status/route";
+import { readLatestExpectedHash, fetchLiveHash, classifyTarget } from "../[slug]/status/route";
 
 describe("readLatestExpectedHash — drift TSV parser", () => {
   beforeEach(() => vi.restoreAllMocks());
@@ -117,6 +117,61 @@ describe("fetchLiveHash — deploy.json fetcher", () => {
     await fetchLiveHash("example.com", "xyz789");
     const calledUrl = (spy as unknown as { mock: { calls: [string][] } }).mock.calls[0][0];
     expect(calledUrl).toContain("?_v=xyz789");
+  });
+});
+
+describe("classifyTarget — state classifier", () => {
+  it("never_published when no expected row", () => {
+    const s = classifyTarget(null, { liveHash: null, ok: false }, null);
+    expect(s).toBe("never_published");
+  });
+
+  it("failed_fetch when expected exists but live fetch broke", () => {
+    const s = classifyTarget(
+      { hash: "H", publishedAt: "2026-04-21T10:00:00.000Z" },
+      { liveHash: null, ok: false },
+      null
+    );
+    expect(s).toBe("failed_fetch");
+  });
+
+  it("drift when live hash differs from expected", () => {
+    const s = classifyTarget(
+      { hash: "NEW", publishedAt: "2026-04-21T10:00:00.000Z" },
+      { liveHash: "OLD", ok: true },
+      null
+    );
+    expect(s).toBe("drift");
+  });
+
+  it("live_matches when live hash equals expected and draft is not newer", () => {
+    const s = classifyTarget(
+      { hash: "H", publishedAt: "2026-04-21T12:00:00.000Z" },
+      { liveHash: "H", ok: true },
+      "2026-04-21T11:00:00.000Z"
+    );
+    expect(s).toBe("live_matches");
+  });
+
+  it("drift when live hash matches BUT draft was saved after last publish", () => {
+    // This is the core UX case — user saved changes, nothing published yet,
+    // live URL still serves the old build. Classifier must flag drift so the
+    // bar prompts "Update preview" even though the live/expected hashes agree.
+    const s = classifyTarget(
+      { hash: "H", publishedAt: "2026-04-21T10:00:00.000Z" },
+      { liveHash: "H", ok: true },
+      "2026-04-21T12:00:00.000Z" // saved 2 hours after publish
+    );
+    expect(s).toBe("drift");
+  });
+
+  it("live_matches when draft timestamp is malformed (degrades safely, no false drift)", () => {
+    const s = classifyTarget(
+      { hash: "H", publishedAt: "2026-04-21T10:00:00.000Z" },
+      { liveHash: "H", ok: true },
+      "not-an-iso-date"
+    );
+    expect(s).toBe("live_matches");
   });
 });
 

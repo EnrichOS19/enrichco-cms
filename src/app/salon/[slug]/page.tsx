@@ -890,6 +890,7 @@ export default function SalonEditorPage() {
               canPublishProduction={canPublish}
               pollTrigger={statusRefreshTrigger}
               onRequestGoLive={handleGoLive}
+              onRequestStaging={handlePreview}
             />
 
             {/* ===== INFO TAB ===== */}

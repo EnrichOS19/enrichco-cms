@@ -115,19 +115,31 @@ export async function fetchLiveHash(
   }
 }
 
-function classifyTarget(
+export function classifyTarget(
   expected: { hash: string; publishedAt: string } | null,
-  live: { liveHash: string | null; ok: boolean }
+  live: { liveHash: string | null; ok: boolean },
+  draftSavedAt: string | null
 ): TargetState {
   if (!expected) return "never_published";
   if (!live.ok) return "failed_fetch";
-  if (live.liveHash === expected.hash) return "live_matches";
-  return "drift";
+  if (live.liveHash !== expected.hash) return "drift";
+  // Live hash matches what we published — but if the CMS draft has been
+  // saved AFTER that publish, users hitting the live URL will see stale
+  // content. Surface that as drift so the UI prompts "Update preview".
+  if (draftSavedAt && expected.publishedAt) {
+    const savedMs = Date.parse(draftSavedAt);
+    const publishedMs = Date.parse(expected.publishedAt);
+    if (!Number.isNaN(savedMs) && !Number.isNaN(publishedMs) && savedMs > publishedMs) {
+      return "drift";
+    }
+  }
+  return "live_matches";
 }
 
 async function buildTargetStatus(
   slug: string,
-  domain: string | null | undefined
+  domain: string | null | undefined,
+  draftSavedAt: string | null
 ): Promise<TargetStatus> {
   if (!domain) {
     return {
@@ -139,16 +151,26 @@ async function buildTargetStatus(
     };
   }
   const expected = readLatestExpectedHash(slug, domain);
-  // Cache-buster: use expected hash if we have one (matches verifyLiveDeploy
-  // convention); else a random nonce.
-  const cacheBuster = expected?.hash ?? crypto.randomBytes(4).toString("hex");
-  const live = await fetchLiveHash(domain, cacheBuster);
+  if (!expected) {
+    // No publish has ever happened for this (slug, domain). Skip the live
+    // fetch — it can't flip the state to green, so sending one every 10s
+    // per open editor tab is wasted bandwidth to the salon site.
+    return {
+      domain: domain.toLowerCase(),
+      publishedAt: null,
+      expectedHash: null,
+      liveHash: null,
+      state: "never_published",
+    };
+  }
+  // Cache-buster: use expected hash (matches verifyLiveDeploy convention).
+  const live = await fetchLiveHash(domain, expected.hash);
   return {
     domain: domain.toLowerCase(),
-    publishedAt: expected?.publishedAt ?? null,
-    expectedHash: expected?.hash ?? null,
+    publishedAt: expected.publishedAt,
+    expectedHash: expected.hash,
     liveHash: live.liveHash,
-    state: classifyTarget(expected, live),
+    state: classifyTarget(expected, live, draftSavedAt),
   };
 }
 
@@ -196,8 +218,8 @@ export async function GET(
   // Run both live checks in parallel — saves ~8s worst case vs serial when
   // a target is down.
   const [staging, production] = await Promise.all([
-    buildTargetStatus(slug, config.stagingDomain),
-    buildTargetStatus(slug, config.domain),
+    buildTargetStatus(slug, config.stagingDomain, draft.savedAt),
+    buildTargetStatus(slug, config.domain, draft.savedAt),
   ]);
 
   const payload: StatusPayload = {

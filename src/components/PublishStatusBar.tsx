@@ -39,6 +39,9 @@ interface Props {
   slug: string;
   /** Called when user clicks "Publish live" on the Production row. */
   onRequestGoLive?: () => void;
+  /** Called when user clicks "Update preview" on the Staging row. Parent
+   *  owns the flush-save-then-publish flow so unsaved edits cannot deploy. */
+  onRequestStaging?: () => Promise<void> | void;
   /** Optional: call when any publish completes so we refresh immediately. */
   pollTrigger?: number;
   /** Production publish permission — hides prod action if false. */
@@ -93,6 +96,7 @@ function targetSummary(t: TargetStatus, draftHash: string | null): string {
 export function PublishStatusBar({
   slug,
   onRequestGoLive,
+  onRequestStaging,
   pollTrigger = 0,
   canPublishProduction = false,
 }: Props) {
@@ -132,12 +136,20 @@ export function PublishStatusBar({
     if (publishingStaging) return;
     setPublishingStaging(true);
     try {
+      // Delegate to the parent if provided — parent owns the save-flush-then-
+      // publish flow so unsaved editor changes cannot deploy to staging.
+      if (onRequestStaging) {
+        await onRequestStaging();
+        await fetchStatus();
+        return;
+      }
+      // Fallback (no parent handler): direct publish. Still useful in isolated
+      // rendering (tests, standalone docs) but emits a warning in the event
+      // payload so the parent can surface it.
       const res = await fetch(`/api/salon/${slug}/publish?target=staging`, { method: "POST" });
-      // Regardless of outcome, refetch status so the UI reflects reality.
       await fetchStatus();
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        // Best-effort toast via window event — parent component owns toast.
         window.dispatchEvent(
           new CustomEvent("publish-status-toast", {
             detail: {
@@ -156,7 +168,7 @@ export function PublishStatusBar({
     } finally {
       setPublishingStaging(false);
     }
-  }, [slug, fetchStatus, publishingStaging]);
+  }, [slug, fetchStatus, publishingStaging, onRequestStaging]);
 
   if (loading || !status) {
     return (
