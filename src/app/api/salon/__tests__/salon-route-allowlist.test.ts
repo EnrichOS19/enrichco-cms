@@ -183,3 +183,56 @@ describe("PUT /api/salon/[slug] — field allowlist", () => {
     expect(res.status).toBe(400);
   });
 });
+
+// ── Domain normalization (prevents the "CMS says published, live shows stale"
+// bug caused by mixed-case `domain` fields hitting case-sensitive filesystem
+// paths while nginx reads from the lowercase DNS variant) ────────────────────
+describe("PUT /api/salon/[slug] — domain normalization", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getSalonConfig).mockReturnValue({
+      config: { ...BASE_CONFIG } as ReturnType<typeof getSalonConfig> extends { config: infer C } ? C : never,
+      dirName: "ntv-beauty",
+    });
+  });
+
+  it("admin PUT with mixed-case domain → stored lowercase", async () => {
+    vi.mocked(requireSalonAccess).mockResolvedValue({ session: makeSession("admin") });
+
+    const res = await PUT(
+      makePutRequest({ ...BASE_CONFIG, domain: "CaliNailsandSpaVacaville.com" }),
+      { params: Promise.resolve({ slug: "ntv-beauty" }) }
+    );
+
+    expect(res.status).toBe(200);
+    const savedData = vi.mocked(saveSalonConfig).mock.calls[0][1] as Record<string, unknown>;
+    expect(savedData.domain).toBe("calinailsandspavacaville.com");
+  });
+
+  it("admin PUT with mixed-case stagingDomain → stored lowercase", async () => {
+    vi.mocked(requireSalonAccess).mockResolvedValue({ session: makeSession("admin") });
+
+    const res = await PUT(
+      makePutRequest({ ...BASE_CONFIG, stagingDomain: "MySalon-STAGING.pages.dev" }),
+      { params: Promise.resolve({ slug: "ntv-beauty" }) }
+    );
+
+    expect(res.status).toBe(200);
+    const savedData = vi.mocked(saveSalonConfig).mock.calls[0][1] as Record<string, unknown>;
+    expect(savedData.stagingDomain).toBe("mysalon-staging.pages.dev");
+  });
+
+  it("admin PUT already-lowercase domain is idempotent", async () => {
+    vi.mocked(requireSalonAccess).mockResolvedValue({ session: makeSession("admin") });
+
+    const res = await PUT(
+      makePutRequest({ ...BASE_CONFIG, domain: "already-lower.com", stagingDomain: "already-lower.web.app" }),
+      { params: Promise.resolve({ slug: "ntv-beauty" }) }
+    );
+
+    expect(res.status).toBe(200);
+    const savedData = vi.mocked(saveSalonConfig).mock.calls[0][1] as Record<string, unknown>;
+    expect(savedData.domain).toBe("already-lower.com");
+    expect(savedData.stagingDomain).toBe("already-lower.web.app");
+  });
+});

@@ -21,6 +21,18 @@ export interface BuildResult {
   stderr: string;
 }
 
+export type VerifyLiveResult =
+  | { verified: true; domain: string; deployHash: string; liveHash: string; status: number }
+  | {
+      verified: false;
+      domain: string;
+      deployHash: string;
+      liveHash: string | null;
+      status: number;
+      reason: "fetch_failed" | "deploy_json_missing" | "hash_mismatch";
+      hint: string;
+    };
+
 /**
  * Build a salon site in a temporary directory and deploy it to the web root.
  *
@@ -43,6 +55,11 @@ export async function buildAndDeploy(
   if (!/^[a-zA-Z0-9][a-zA-Z0-9.\-]*\.[a-zA-Z]{2,}$/.test(domain)) {
     throw new Error(`Invalid domain: ${domain}`);
   }
+
+  // DNS hostnames are case-insensitive; filesystem paths and nginx `root`
+  // directives are not. Normalizing here is the single choke point that
+  // guarantees every publish lands in the directory nginx serves from.
+  const domainLower = domain.toLowerCase();
 
   let buildOut = "";
   let buildErr = "";
@@ -80,22 +97,52 @@ export async function buildAndDeploy(
     buildErr = buildResult.stderr;
     steps.push("Build complete");
 
-    // Step 5 — Package
+    // Step 5a — Compute deploy hash from the out/ contents BEFORE tarring,
+    // so we can write a fingerprint file INTO the deploy (verified post-deploy).
+    // Hash over the file list + sizes + mtimes gives a stable per-build value
+    // that changes whenever content changes.
+    const outDirSrc = path.join(tmpDir, "out");
+    const hashSource = await execFileAsync(
+      "sh",
+      ["-c", `find . -type f -printf '%P %s\\n' | sort`],
+      { cwd: outDirSrc, timeout: 15000 }
+    );
+    const deployHash = crypto
+      .createHash("sha256")
+      .update(hashSource.stdout)
+      .digest("hex")
+      .slice(0, 16);
+
+    // Step 5b — Write fingerprint file. Post-deploy verification fetches this
+    // from the live URL to confirm the build we just produced is what users
+    // actually reach. Catches case-mismatch dirs, wrong-target deploys,
+    // nginx misconfig, and upstream cache issues.
+    const fingerprint = {
+      hash: deployHash,
+      slug,
+      domain: domainLower,
+      deployedAt: new Date().toISOString(),
+    };
+    fs.writeFileSync(
+      path.join(outDirSrc, "deploy.json"),
+      JSON.stringify(fingerprint, null, 2) + "\n"
+    );
+
+    // Step 5c — Package (includes deploy.json)
     steps.push("Packaging...");
     await execFileAsync("tar", ["-czf", tarPath, "out/"], { cwd: tmpDir, timeout: 30000 });
     steps.push("Package ready");
 
-    const tarBytes = fs.readFileSync(tarPath);
-    const deployHash = crypto.createHash("sha256").update(tarBytes).digest("hex").slice(0, 16);
-
     if (dryRun) {
       steps.push("Dry run — build succeeded, deploy skipped");
-      return { domain, deployHash, steps, stdout: buildOut, stderr: buildErr };
+      return { domain: domainLower, deployHash, steps, stdout: buildOut, stderr: buildErr };
     }
 
     // Step 6 — Deploy (atomic swap on same server)
+    // Path uses lowercased domain so it matches nginx's `root` directive,
+    // which follows DNS case convention (always lowercase).
     steps.push("Deploying...");
-    const webRoot = path.join(WEB_ROOT, domain);
+    const webRoot = path.join(WEB_ROOT, domainLower);
     await execFileAsync("mkdir", ["-p", webRoot], { timeout: 5000 });
     await execFileAsync("tar", ["-xzf", tarPath, "-C", webRoot], { timeout: 30000 });
 
@@ -116,7 +163,7 @@ export async function buildAndDeploy(
 
     steps.push("Deployed");
 
-    return { domain, deployHash, steps, stdout: buildOut, stderr: buildErr };
+    return { domain: domainLower, deployHash, steps, stdout: buildOut, stderr: buildErr };
   } finally {
     // Always clean up temp artifacts regardless of success or failure
     try {
@@ -125,5 +172,83 @@ export async function buildAndDeploy(
       }
     } catch {}
     try { if (fs.existsSync(tarPath)) fs.unlinkSync(tarPath); } catch {}
+  }
+}
+
+/**
+ * Post-deploy verification. Fetches /deploy.json from the live URL and
+ * confirms the hash matches what we just built. Cache-buster query string
+ * defeats Cloudflare / nginx / browser caches.
+ *
+ * Any mismatch here means the publish silently failed to reach live users
+ * (wrong nginx path, DNS pointing at Firebase ghost, CF SSL edge error, etc.).
+ * Surface this to the editor UI — do NOT report success.
+ */
+export async function verifyLiveDeploy(
+  domain: string,
+  deployHash: string
+): Promise<VerifyLiveResult> {
+  const domainLower = domain.toLowerCase();
+  const url = `https://${domainLower}/deploy.json?_v=${deployHash}`;
+
+  try {
+    const res = await fetch(url, {
+      cache: "no-store",
+      redirect: "follow",
+      headers: { "Cache-Control": "no-cache", Pragma: "no-cache" },
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (!res.ok) {
+      return {
+        verified: false,
+        domain: domainLower,
+        deployHash,
+        liveHash: null,
+        status: res.status,
+        reason: "deploy_json_missing",
+        hint:
+          `GET ${url} returned HTTP ${res.status}. Build succeeded but the ` +
+          `live URL is NOT serving our deploy. Check DNS (does ${domainLower} ` +
+          `resolve to mangotemplate-web-server / 34.138.245.90?), nginx server ` +
+          `block 'root' directive (path must match /var/www/${domainLower}/public), ` +
+          `and any upstream cache (Cloudflare orange-cloud).`,
+      };
+    }
+
+    const body = (await res.json()) as { hash?: string };
+    const liveHash = typeof body.hash === "string" ? body.hash : null;
+
+    if (liveHash !== deployHash) {
+      return {
+        verified: false,
+        domain: domainLower,
+        deployHash,
+        liveHash,
+        status: res.status,
+        reason: "hash_mismatch",
+        hint:
+          `Live URL is serving a DIFFERENT build (live=${liveHash ?? "null"}, ` +
+          `expected=${deployHash}). Likely stale cache at CF/nginx or a second ` +
+          `server still in the DNS rotation. Try a hard refresh and re-check; ` +
+          `if it persists, purge CF cache for ${domainLower}.`,
+      };
+    }
+
+    return { verified: true, domain: domainLower, deployHash, liveHash, status: res.status };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return {
+      verified: false,
+      domain: domainLower,
+      deployHash,
+      liveHash: null,
+      status: 0,
+      reason: "fetch_failed",
+      hint:
+        `Could not reach https://${domainLower}/ at all (${msg}). DNS may not ` +
+        `resolve, TLS cert may be invalid for this host, or the server may be ` +
+        `unreachable. Verify with: dig ${domainLower} and curl -vI https://${domainLower}/`,
+    };
   }
 }
