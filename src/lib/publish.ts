@@ -5,6 +5,7 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 import { injectToTempDir } from "./template";
+import { PLACEHOLDER_PATTERN } from "./schemas/salon";
 
 const execFileAsync = promisify(execFile);
 
@@ -12,6 +13,36 @@ export const WEB_ROOT = process.env.WEB_ROOT || "/var/www";
 
 // Exported so rebuild-all can acquire the same lock set as single-site publish
 export const publishLocks = new Set<string>();
+
+/**
+ * Walk salon.json and throw if any string value still carries an onboarding
+ * seed sentinel (e.g. "VENUS_PLACEHOLDER"). Prevents publishing a site with
+ * fake data. Layer 1 (schema) catches this on save; this catches anything
+ * already persisted from before the schema fix.
+ */
+export function assertNoPlaceholders(
+  obj: unknown,
+  pathSegments: string[] = []
+): void {
+  if (typeof obj === "string") {
+    if (PLACEHOLDER_PATTERN.test(obj)) {
+      throw new Error(
+        `Publish blocked — salon.json field "${pathSegments.join(".")}" still contains a placeholder sentinel: ${JSON.stringify(obj)}. ` +
+          `Set a real value through the CMS editor before publishing.`
+      );
+    }
+    return;
+  }
+  if (Array.isArray(obj)) {
+    obj.forEach((item, i) => assertNoPlaceholders(item, [...pathSegments, String(i)]));
+    return;
+  }
+  if (obj && typeof obj === "object") {
+    for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
+      assertNoPlaceholders(value, [...pathSegments, key]);
+    }
+  }
+}
 
 export interface BuildResult {
   domain: string;
@@ -65,6 +96,25 @@ export async function buildAndDeploy(
   let buildErr = "";
 
   try {
+    // Step 0 — Pre-flight: reject salon.json with placeholder sentinels.
+    // Catches onboarding seeds like "VENUS_PLACEHOLDER" that would otherwise
+    // render as the iframe src of a broken booking page. Layer 1 (PUT
+    // schema validation) blocks new placeholders from entering; this blocks
+    // any that are already persisted from older saves.
+    const cfgPath = path.join(siteDir, "config", "salon.json");
+    try {
+      const rawCfg = fs.readFileSync(cfgPath, "utf-8");
+      const parsed = JSON.parse(rawCfg);
+      assertNoPlaceholders(parsed);
+      steps.push("Pre-flight: no placeholder sentinels in salon.json");
+    } catch (err) {
+      if (err instanceof SyntaxError) {
+        throw new Error(`salon.json at ${cfgPath} is not valid JSON: ${err.message}`);
+      }
+      // assertNoPlaceholders throws with a formatted message; surface it.
+      throw err;
+    }
+
     // Step 1 — Create temp copy of site source (non-destructive)
     steps.push("Copying to temp dir...");
     await execFileAsync("cp", ["-r", siteDir, tmpDir], { timeout: 30000 });
@@ -112,6 +162,31 @@ export async function buildAndDeploy(
       .update(hashSource.stdout)
       .digest("hex")
       .slice(0, 16);
+
+    // Step 5a.5 — Post-build content check. Walk every .html in out/ and
+    // abort if any placeholder sentinel leaked into the rendered output.
+    // Catches template-level hardcodes (not source data — that was guarded
+    // at step 0) that would produce a broken iframe/link on the live site.
+    const buildHtmlFiles = (
+      await execFileAsync("find", [outDirSrc, "-type", "f", "-name", "*.html"], {
+        timeout: 10000,
+      })
+    ).stdout
+      .split("\n")
+      .filter((p) => p.trim().length > 0);
+    for (const htmlPath of buildHtmlFiles) {
+      const html = fs.readFileSync(htmlPath, "utf-8");
+      const match = html.match(PLACEHOLDER_PATTERN);
+      if (match) {
+        const rel = path.relative(outDirSrc, htmlPath);
+        throw new Error(
+          `Publish blocked — built ${rel} contains a placeholder sentinel (${JSON.stringify(match[0])}). ` +
+            `This usually means a template component hardcoded a seed value. ` +
+            `Fix the source (${siteDir}/src/) or salon.json, then republish.`
+        );
+      }
+    }
+    steps.push(`Post-build: ${buildHtmlFiles.length} HTML files scanned, no placeholders`);
 
     // Step 5b — Write fingerprint file. Post-deploy verification fetches this
     // from the live URL to confirm the build we just produced is what users

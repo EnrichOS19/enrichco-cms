@@ -6,11 +6,28 @@ const timeRegex = /^([0]?[1-9]|1[0-2]):[0-5]\d\s?(AM|PM)$/i;
 const colorRegex = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 const domainRegex = /^[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z]{2,}$/;
 
-// Flexible URL — accepts with or without protocol, or empty
+// Seed/placeholder sentinel values — onboarding inserts things like
+// "VENUS_PLACEHOLDER" or "COMING_SOON" that are meant to be overwritten
+// with real data. If a salon.json field still contains one of these at
+// save time, the user is trying to publish a fake URL/value to the live
+// site. Reject loudly on PUT; buildAndDeploy also asserts before next build.
+export const PLACEHOLDER_PATTERN = /(_PLACEHOLDER|COMING[_ ]SOON|REPLACE[_ ]ME|TODO|FIXME|XXX_)/i;
+const notPlaceholder = (label: string) =>
+  (val: string) => !PLACEHOLDER_PATTERN.test(val) ||
+    ({
+      message: `${label} contains a seed/placeholder sentinel ("${val}"). Replace with the real value before saving.`,
+    } as never);
+
+// Flexible URL — accepts with or without protocol, or empty.
+// Rejects placeholder sentinels so fake seeds can't get persisted.
 const flexibleUrl = z
   .string()
   .trim()
   .max(500)
+  .refine(
+    (v) => v === "" || !PLACEHOLDER_PATTERN.test(v),
+    { message: "URL contains a placeholder sentinel (e.g. _PLACEHOLDER). Enter the real URL or leave blank." }
+  )
   .optional()
   .or(z.literal(""));
 
@@ -120,9 +137,21 @@ export const salonSchema = z.object({
     google: flexibleUrl,
   }).optional(),
   booking: z.object({
-    url: z.string().trim().max(500).optional().or(z.literal("")),
+    // Placeholder sentinels (e.g. "*_PLACEHOLDER") are rejected so fake
+    // seeds from onboarding can't be persisted or published. Empty is
+    // allowed — the site template renders a "booking coming soon" state
+    // until a real URL is provided.
+    url: z
+      .string()
+      .trim()
+      .max(500)
+      .refine(
+        (v) => v === "" || !PLACEHOLDER_PATTERN.test(v),
+        { message: "Booking URL is a placeholder (e.g. VENUS_PLACEHOLDER). Enter the real URL from Mango or leave blank." }
+      )
+      .optional()
+      .or(z.literal("")),
     provider: z.string().trim().max(80).optional().or(z.literal("")),
-    placeholder: z.boolean().optional(),
     label: z.string().trim().max(100).optional().or(z.literal("")),
   }).optional(),
   branding: z.object({
