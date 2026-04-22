@@ -204,6 +204,13 @@ export const salonSchema = z.object({
   domain: z.string().trim().max(253).regex(domainRegex, "Invalid domain format").optional().or(z.literal("")),
   stagingDomain: z.string().trim().max(253).regex(domainRegex, "Invalid staging domain format").optional().or(z.literal("")),
   siteStatus: z.enum(["staging", "production"]).optional(),
+  // Set to true when the salon's production domain is hosted on external
+  // infra (not our nginx). Disables the Go Live button in the CMS editor
+  // and shows a banner so admins can't accidentally overwrite or break
+  // an externally-hosted production site. See
+  // ~/Enrich&Co/outputs/2026-04-22-orphan-salons-investigation.md for the
+  // two current external-prod salons.
+  externalProd: z.boolean().optional(),
   domainOwnership: z.enum(["enrichco", "client"]).optional(),
   websiteManager: z.enum(["ai-team", "marketing-team"]).optional(),
 }).passthrough();
@@ -223,6 +230,7 @@ export const ownerSalonSchema = salonSchema
     stagingDomain: true,
     domainOwnership: true,
     websiteManager: true,
+    externalProd: true,
   })
   .strict();
 

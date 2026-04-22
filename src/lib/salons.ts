@@ -186,6 +186,42 @@ export function getSalonSiteDir(slug: string): string | null {
 }
 
 /**
+ * Find a CMS salon by its Mango rvcNo field (populated on ~11/127 salons
+ * today; sparse fleet coverage is a known limitation tracked separately).
+ * Returns null if no salon has matching rvcNo or if rvcNo is missing/invalid.
+ *
+ * Directory scan skips dirs starting with `_` (e.g. `_removed_*`, `_archived_*`)
+ * and `.` (hidden) to stay consistent with getSalonDirs() behavior. Corrupt
+ * salon.json files are skipped rather than throwing so a single bad file
+ * cannot break admin owner-grant suggestions for the whole fleet.
+ */
+export function findSlugByRvcNo(rvcNo: number): string | null {
+  if (typeof rvcNo !== "number" || !Number.isFinite(rvcNo)) return null;
+  const root = sitesDir();
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(root);
+  } catch {
+    return null;
+  }
+  for (const dir of entries) {
+    if (dir.startsWith("_") || dir.startsWith(".")) continue;
+    const cfg = path.join(root, dir, "config", "salon.json");
+    if (!fs.existsSync(cfg)) continue;
+    try {
+      const data = JSON.parse(fs.readFileSync(cfg, "utf-8")) as { slug?: string; rvcNo?: number };
+      if (data.rvcNo === rvcNo) {
+        // Derive slug the same way getSalonDirs() does: strip -website suffix.
+        return data.slug ?? dir.replace(/-website$/, "");
+      }
+    } catch {
+      /* skip corrupt salon.json */
+    }
+  }
+  return null;
+}
+
+/**
  * Metadata for a single salon config backup (.bak file).
  *
  * `id` is the filename suffix (everything after `salon.json.bak.`) —

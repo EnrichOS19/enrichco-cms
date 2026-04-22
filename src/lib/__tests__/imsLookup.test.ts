@@ -9,6 +9,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import fs from "fs";
+import os from "os";
+import path from "path";
 
 // ── fetch mock ───────────────────────────────────────────────────────────────
 const mockFetch = vi.fn();
@@ -204,6 +207,69 @@ describe("GET /api/admin/ims-lookup", () => {
     const body = await res.json();
     expect(body.found).toBe(false);
     expect(body.name).toBeUndefined();
+  });
+
+  // ── suggestedSlug (Phase 2 auto-suggest) ─────────────────────────────────
+
+  describe("suggestedSlug (findSlugByRvcNo integration)", () => {
+    let tempDir: string;
+
+    beforeEach(() => {
+      tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "cms-ims-rvc-"));
+      process.env.SITES_DIR = tempDir;
+    });
+
+    afterEach(() => {
+      try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
+      delete process.env.SITES_DIR;
+    });
+
+    function writeSalon(dirName: string, data: unknown) {
+      const configDir = path.join(tempDir, dirName, "config");
+      fs.mkdirSync(configDir, { recursive: true });
+      fs.writeFileSync(path.join(configDir, "salon.json"), JSON.stringify(data, null, 2));
+    }
+
+    it("returns suggestedSlug when storeID matches a salon's rvcNo", async () => {
+      writeSalon("ntv-beauty-studio-website", { slug: "ntv-beauty-studio", rvcNo: 2222 });
+      makeAdminAuth();
+      const targetEmail = "contact@ntv.com";
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ return: true, token: "ims-token-xyz" }),
+        text: async () => "",
+      });
+      mockFetch.mockResolvedValueOnce(imsPageWithMatch(targetEmail));
+
+      const res = await GET(makeRequest(targetEmail));
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.found).toBe(true);
+      expect(body.storeID).toBe(2222);
+      expect(body.suggestedSlug).toBe("ntv-beauty-studio");
+    });
+
+    it("returns suggestedSlug:null when storeID is set but no salon has matching rvcNo", async () => {
+      writeSalon("different-salon-website", { slug: "different-salon", rvcNo: 9999 });
+      makeAdminAuth();
+      const targetEmail = "contact@ntv.com";
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ return: true, token: "ims-token-xyz" }),
+        text: async () => "",
+      });
+      mockFetch.mockResolvedValueOnce(imsPageWithMatch(targetEmail));
+
+      const res = await GET(makeRequest(targetEmail));
+      const body = await res.json();
+      expect(body.found).toBe(true);
+      expect(body.storeID).toBe(2222);
+      expect(body.suggestedSlug).toBeNull();
+    });
   });
 
   // ── Cache behavior ────────────────────────────────────────────────────────

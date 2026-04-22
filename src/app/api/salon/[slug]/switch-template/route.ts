@@ -165,6 +165,21 @@ export async function POST(
     const salonResult = getSalonConfig(slug);
     const siteStatus = salonResult?.config?.siteStatus ?? "staging";
     const isProduction = siteStatus === "production";
+
+    // externalProd guard (parity with publish route): block production deploys
+    // for salons whose prod domain is hosted outside CMS. Staging targets
+    // still deploy normally — CMS owns staging regardless of prod hosting.
+    if (isProduction && salonResult?.config?.externalProd === true) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "This salon's production site is hosted externally. CMS cannot deploy to it.",
+          externalProd: true,
+        },
+        { status: 422 }
+      );
+    }
+
     const domain = isProduction ? salonResult?.config?.domain : salonResult?.config?.stagingDomain;
     if (!domain) {
       const missing = isProduction ? "domain" : "stagingDomain";

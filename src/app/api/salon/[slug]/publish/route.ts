@@ -50,6 +50,20 @@ export async function POST(
     );
   }
 
+  // externalProd salons have a production domain hosted on external infra
+  // (not our nginx). Block any production publish attempt so we can't
+  // overwrite or break an externally-hosted site. Staging publishes still
+  // work normally — CMS owns staging regardless of where production lives.
+  if (isProduction && config?.externalProd === true) {
+    return NextResponse.json(
+      {
+        error: "This salon's production site is hosted externally. CMS cannot deploy to it.",
+        externalProd: true,
+      },
+      { status: 422 }
+    );
+  }
+
   const domain = isProduction ? config?.domain : config?.stagingDomain;
   if (!domain) {
     const missing = isProduction ? "domain" : "stagingDomain";
