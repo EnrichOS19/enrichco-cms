@@ -121,14 +121,21 @@ export function saveSalonConfig(slug: string, config: SalonConfig): boolean {
       const backupPath = path.join(configDir, `salon.json.bak.${ts}`);
       fs.copyFileSync(configPath, backupPath);
 
-      // Rotate: keep only the last 10 backups, ranked by mtime (handles
+      // Rotate: keep only the last N backups, ranked by mtime (handles
       // any legacy UUID-named backups already on disk).
+      //
+      // Cap raised from 10 → 100 per Sean directive: the History tab was
+      // hitting the cap within a single editing session (quan.nguyen hit
+      // 10+ saves on vanity in one hour). A 100-revision buffer gives
+      // room for routine editing + meaningful restore depth without
+      // bloating disk (100 × ~30KB = ~3MB per salon, 127 salons < 400MB).
+      const BACKUP_CAP = 100;
       const backups = fs.readdirSync(configDir)
         .filter((f) => f.startsWith("salon.json.bak."))
         .map((f) => ({ f, m: fs.statSync(path.join(configDir, f)).mtimeMs }))
         .sort((a, b) => a.m - b.m);
-      if (backups.length > 10) {
-        for (const old of backups.slice(0, backups.length - 10)) {
+      if (backups.length > BACKUP_CAP) {
+        for (const old of backups.slice(0, backups.length - BACKUP_CAP)) {
           try { fs.unlinkSync(path.join(configDir, old.f)); } catch {}
         }
       }
