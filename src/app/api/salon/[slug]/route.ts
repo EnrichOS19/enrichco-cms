@@ -84,6 +84,20 @@ export async function PUT(
     );
   }
 
+  // Normalize hostnames to lowercase before persisting. Filesystem paths and
+  // nginx `root` directives are case-sensitive; DNS is not. Storing canonical
+  // lowercase here guarantees the CMS editor, the publish target, and the
+  // nginx server block all agree on the same directory.
+  // Owner PUT never gets this far with these fields (stripped above as protected),
+  // so this only fires for admin/staff who can edit domain/stagingDomain.
+  const data = parseResult.data as Record<string, unknown>;
+  if (typeof data.domain === "string") {
+    data.domain = data.domain.toLowerCase();
+  }
+  if (typeof data.stagingDomain === "string") {
+    data.stagingDomain = data.stagingDomain.toLowerCase();
+  }
+
   // Dry-run mode: validate only, don't save (used by preflight check)
   const isDryRun = request.headers.get("X-Dry-Run") === "true";
   if (isDryRun) {

@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TemplateSwitcher } from "@/components/TemplateSwitcher";
+import { PublishStatusBar } from "@/components/PublishStatusBar";
 import { useToast } from "@/components/Toast";
 import {
   ArrowLeft,
@@ -157,6 +158,9 @@ export default function SalonEditorPage() {
   const [showGoLiveConfirm, setShowGoLiveConfirm] = useState(false);
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [uploadingLogo, setUploadingLogo] = useState(false);
+  // Incremented after any publish so <PublishStatusBar /> refetches immediately
+  // instead of waiting for its 10s poll.
+  const [statusRefreshTrigger, setStatusRefreshTrigger] = useState(0);
   const initialConfigRef = useRef<string>("");
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveRevisionRef = useRef(0);
@@ -211,6 +215,19 @@ export default function SalonEditorPage() {
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
   }, [dirty]);
+
+  // Bridge: PublishStatusBar emits a CustomEvent when its "Update preview"
+  // button succeeds/fails. Relay those to our toast so feedback is consistent
+  // without prop-drilling the useToast hook into the status bar.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { type?: string; message?: string } | undefined;
+      if (!detail?.message) return;
+      toast(detail.message, (detail.type as "success" | "error" | "info") ?? "info");
+    };
+    window.addEventListener("publish-status-toast", handler);
+    return () => window.removeEventListener("publish-status-toast", handler);
+  }, [toast]);
 
   // Keyboard shortcut: Cmd+S forces immediate save
   useEffect(() => {
@@ -340,15 +357,27 @@ export default function SalonEditorPage() {
     try {
       const res = await fetch(`/api/salon/${slug}/publish`, { method: "POST" });
       const data = await res.json();
-      if (!res.ok) {
-        toast(data.message || "Publish failed", "error");
+      if (res.status === 502 && data?.verified === false) {
+        // Build + deploy succeeded on our server, but the live URL is not
+        // serving the new build. This is the class of bug where editors
+        // think they published but users see stale content. Do NOT say success.
+        toast(
+          `Publish did NOT reach live users (${data.reason}). ${data.hint ?? ""}`,
+          "error"
+        );
+      } else if (!res.ok) {
+        toast(data.message || data.error || "Publish failed", "error");
       } else {
-        toast("Live site updated!", "success");
+        toast(
+          `Live site updated — verified reachable (build ${data.deploy_hash})`,
+          "success"
+        );
       }
     } catch {
       toast("Publish failed", "error");
     } finally {
       setPublishing(false);
+      setStatusRefreshTrigger((n) => n + 1);
     }
   };
 
@@ -391,21 +420,36 @@ export default function SalonEditorPage() {
 
       // 2. Build + deploy to staging
       const res = await fetch(`/api/salon/${slug}/publish?target=staging`, { method: "POST" });
-      const data = await res.json().catch(() => ({}));
+      const data = await res.json().catch(() => ({} as Record<string, unknown>));
+      if (res.status === 502 && data?.verified === false) {
+        // Staging build succeeded but live URL doesn't reflect it. Don't
+        // silently pop open a stale preview — tell the user so they can fix
+        // the config (usually staging DNS or staging dir pathing).
+        toast(
+          `Preview built but did NOT reach ${stagingDomain} (${data.reason}). ${data.hint ?? ""}`,
+          "error"
+        );
+        previewWin.close();
+        return;
+      }
       if (!res.ok) {
-        toast(data.message || "Preview build failed", "error");
+        toast(
+          (data.message as string) || (data.error as string) || "Preview build failed",
+          "error"
+        );
         previewWin.close();
         return;
       }
 
       // 3. Navigate the already-open window to the fresh staging site
       previewWin.location.href = `https://${stagingDomain}`;
-      toast("Preview ready!", "success");
+      toast("Preview ready — verified reachable!", "success");
     } catch {
       toast("Preview build failed", "error");
       previewWin.close();
     } finally {
       setPreviewing(false);
+      setStatusRefreshTrigger((n) => n + 1);
     }
   };
 
@@ -865,6 +909,19 @@ export default function SalonEditorPage() {
                 {activeTab === "settings" && "Booking URL and social media links"}
               </p>
             </div>
+
+            {/* ===== PUBLISH STATUS BAR =====
+                 Always-visible indicator of where CMS content currently lives
+                 (Draft / Staging / Production). Polls /api/salon/[slug]/status
+                 every 10s so it reflects the moment a publish completes,
+                 without the user needing to refresh. */}
+            <PublishStatusBar
+              slug={slug}
+              canPublishProduction={canPublish}
+              pollTrigger={statusRefreshTrigger}
+              onRequestGoLive={handleGoLive}
+              onRequestStaging={handlePreview}
+            />
 
             {/* ===== INFO TAB ===== */}
             {activeTab === "info" && (

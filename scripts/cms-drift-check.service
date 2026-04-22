@@ -1,0 +1,13 @@
+[Unit]
+Description=CMS drift guard — verify every salon's live URL still serves the last-deployed build
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=aisquad
+Group=aisquad
+ExecStart=/opt/enrich-cms/scripts/drift-check.sh
+StandardOutput=journal
+StandardError=journal
+# Non-zero exit = drift detected. Don't restart — timer handles the cadence.

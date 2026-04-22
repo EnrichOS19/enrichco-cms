@@ -11,7 +11,7 @@ import { getSalonConfig, getSalonSiteDir } from "@/lib/salons";
 import { requireSalonAccess } from "@/lib/auth";
 import { isStaffRole, type UserRole } from "@/lib/db";
 import { logEvent } from "@/lib/audit";
-import { buildAndDeploy, publishLocks } from "@/lib/publish";
+import { buildAndDeploy, publishLocks, verifyLiveDeploy } from "@/lib/publish";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 180;
@@ -74,6 +74,43 @@ export async function POST(
   try {
     const result = await buildAndDeploy(siteDir, domain, slug);
 
+    // Post-deploy live-URL verification. Build succeeded + files landed on
+    // disk; this step confirms real users actually see the new build.
+    const verification = await verifyLiveDeploy(result.domain, result.deployHash);
+
+    if (!verification.verified) {
+      // Publish DID NOT reach live users. Log distinctly so drift is visible
+      // in the audit log, and return 502 so the editor UI shows an error
+      // banner instead of a green "published" confirmation.
+      logEvent({
+        email: session.email,
+        action: isProduction ? "publish_verify_failed_prod" : "publish_verify_failed_staging",
+        slug,
+        deploy_hash: result.deployHash,
+        diff: JSON.stringify({
+          domain: result.domain,
+          reason: verification.reason,
+          liveHash: verification.liveHash,
+          status: verification.status,
+        }),
+      });
+
+      return NextResponse.json(
+        {
+          ok: false,
+          verified: false,
+          error: "Publish did not reach live users",
+          reason: verification.reason,
+          hint: verification.hint,
+          domain: result.domain,
+          deploy_hash: result.deployHash,
+          live_hash: verification.liveHash,
+          steps: result.steps,
+        },
+        { status: 502 }
+      );
+    }
+
     logEvent({
       email: session.email,
       action: isProduction ? "publish_production" : "publish_staging",
@@ -83,7 +120,8 @@ export async function POST(
 
     return NextResponse.json({
       ok: true,
-      domain,
+      verified: true,
+      domain: result.domain,
       siteStatus,
       steps: result.steps,
       deploy_hash: result.deployHash,
