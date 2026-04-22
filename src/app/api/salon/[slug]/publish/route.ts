@@ -1,155 +1,144 @@
 /**
- * Publish Route — Phase 3A
+ * Publish Route — Phase 3B
  *
- * Replaces legacy hosting deploy with GCP IAP-tunneled deploy:
- *   1. Build salon site (rm -rf .next out && npm run build)
- *   2. Package output as tar.gz
- *   3. Upload to production server via gcloud compute scp + IAP
- *   4. Extract atomically on the server (keeps public_old for rollback)
- *   5. Log to audit trail
- *
- * SSE progress feed: each step emits an event so the UI shows live status.
+ * Auth + validation + lock → delegates to buildAndDeploy() from lib/publish.ts.
+ * Build happens in a temp copy of the site; source tree is never mutated.
+ * Shared template components are injected before every build.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { getSalonConfig, getSalonSiteDir } from "@/lib/salons";
-import { exec } from "child_process";
-import { promisify } from "util";
-import { requireSession } from "@/lib/auth";
+import { requireSalonAccess } from "@/lib/auth";
+import { isStaffRole, type UserRole } from "@/lib/db";
 import { logEvent } from "@/lib/audit";
-import fs from "fs";
-import path from "path";
-import crypto from "crypto";
-
-const execAsync = promisify(exec);
+import { buildAndDeploy, publishLocks, verifyLiveDeploy } from "@/lib/publish";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 180; // 3 minutes — builds can take a while
-
-const GCP_PROJECT  = process.env.GCP_PROJECT  || "mangoforsalon-97743";
-const GCP_ZONE     = process.env.GCP_ZONE     || "us-east1-c";
-const GCP_INSTANCE = process.env.GCP_INSTANCE || "mangotemplate-web-server";
-const WEB_ROOT     = process.env.WEB_ROOT     || "/var/www";
+export const maxDuration = 180;
 
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ slug: string }> }
 ) {
-  const auth = await requireSession(request);
+  const { slug } = await params;
+  const auth = await requireSalonAccess(request, slug);
   if ("response" in auth) return auth.response;
   const { session } = auth;
 
-  const { slug } = await params;
   const siteDir = getSalonSiteDir(slug);
   if (!siteDir) {
     return NextResponse.json({ error: "Salon site directory not found" }, { status: 404 });
   }
 
   const salonResult = getSalonConfig(slug);
-  const domain = salonResult?.config?.domain;
-  if (!domain) {
+  const config = salonResult?.config;
+  const siteStatus = config?.siteStatus ?? "staging";
+
+  const targetOverride = request.nextUrl.searchParams.get("target");
+  const isProduction = targetOverride === "staging" ? false : siteStatus === "production";
+
+  // Salon owners can publish to staging only. Promoting to production
+  // requires a staff (admin/superadmin/support) role — protects live
+  // customer-facing domains from owner-side mistakes or compromised accounts.
+  if (isProduction && !isStaffRole(session.role as UserRole)) {
     return NextResponse.json(
-      { error: "Salon has no domain configured. Add a domain field to salon.json before publishing." },
+      {
+        error:
+          "Forbidden — only staff can publish to production. Publish to staging first and ask an admin to promote.",
+      },
+      { status: 403 }
+    );
+  }
+
+  const domain = isProduction ? config?.domain : config?.stagingDomain;
+  if (!domain) {
+    const missing = isProduction ? "domain" : "stagingDomain";
+    return NextResponse.json(
+      { error: `Salon has no ${missing} configured. Set it in the Settings tab before publishing.` },
       { status: 422 }
     );
   }
 
-  const steps: string[] = [];
-  const tarPath = `/tmp/${slug}-deploy-${Date.now()}.tar.gz`;
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9.\-]*\.[a-zA-Z]{2,}$/.test(domain)) {
+    return NextResponse.json({ error: "Invalid domain format" }, { status: 422 });
+  }
+
+  if (publishLocks.has(slug)) {
+    return NextResponse.json(
+      { error: "A publish for this salon is already in progress. Please wait for it to finish." },
+      { status: 429 }
+    );
+  }
+  publishLocks.add(slug);
 
   try {
-    // Step 1 — Build
-    steps.push("Building...");
-    await execAsync("rm -rf .next out", { cwd: siteDir, timeout: 10000 });
-    const { stdout: buildOut, stderr: buildErr } = await execAsync(
-      "npm run build",
-      { cwd: siteDir, timeout: 160000 }
-    );
-    steps.push("Build complete");
+    const result = await buildAndDeploy(siteDir, domain, slug);
 
-    // Step 2 — Package
-    steps.push("Packaging...");
-    await execAsync(`tar -czf ${tarPath} out/`, { cwd: siteDir, timeout: 30000 });
-    steps.push("Package ready");
+    // Post-deploy live-URL verification. Build succeeded + files landed on
+    // disk; this step confirms real users actually see the new build.
+    const verification = await verifyLiveDeploy(result.domain, result.deployHash);
 
-    // Compute deploy hash for audit trail
-    const tarBytes = fs.readFileSync(tarPath);
-    const deployHash = crypto.createHash("sha256").update(tarBytes).digest("hex").slice(0, 16);
+    if (!verification.verified) {
+      // Publish DID NOT reach live users. Log distinctly so drift is visible
+      // in the audit log, and return 502 so the editor UI shows an error
+      // banner instead of a green "published" confirmation.
+      logEvent({
+        email: session.email,
+        action: isProduction ? "publish_verify_failed_prod" : "publish_verify_failed_staging",
+        slug,
+        deploy_hash: result.deployHash,
+        diff: JSON.stringify({
+          domain: result.domain,
+          reason: verification.reason,
+          liveHash: verification.liveHash,
+          status: verification.status,
+        }),
+      });
 
-    // Step 3 — Upload via IAP
-    steps.push("Uploading to server...");
-    const scpCmd = [
-      "gcloud compute scp",
-      tarPath,
-      `aisquad@${GCP_INSTANCE}:/tmp/`,
-      `--zone=${GCP_ZONE}`,
-      `--project=${GCP_PROJECT}`,
-      "--tunnel-through-iap",
-      "--strict-host-key-checking=no",
-    ].join(" ");
-    await execAsync(scpCmd, { timeout: 60000 });
-    steps.push("Upload complete");
+      return NextResponse.json(
+        {
+          ok: false,
+          verified: false,
+          error: "Publish did not reach live users",
+          reason: verification.reason,
+          hint: verification.hint,
+          domain: result.domain,
+          deploy_hash: result.deployHash,
+          live_hash: verification.liveHash,
+          steps: result.steps,
+        },
+        { status: 502 }
+      );
+    }
 
-    // Step 4 — Extract atomically on server
-    steps.push("Deploying on server...");
-    const tarName = path.basename(tarPath);
-    const webRoot = `${WEB_ROOT}/${domain}`;
-    const deployScript = [
-      `mkdir -p ${webRoot}`,
-      `cd ${webRoot}`,
-      `tar -xzf /tmp/${tarName}`,
-      `[ -d public ] && mv public public_tombstone || true`,
-      `[ -d public_old ] && rm -rf public_old || true`,
-      `[ -d public_tombstone ] && mv public_tombstone public_old || true`,
-      `mv out public`,
-      `sudo chown -R www-data:www-data public 2>/dev/null || true`,
-      `rm -f /tmp/${tarName}`,
-    ].join(" && ");
-
-    const sshCmd = [
-      "gcloud compute ssh",
-      `aisquad@${GCP_INSTANCE}`,
-      `--zone=${GCP_ZONE}`,
-      `--project=${GCP_PROJECT}`,
-      "--tunnel-through-iap",
-      "--strict-host-key-checking=no",
-      `-- "${deployScript}"`,
-    ].join(" ");
-    await execAsync(sshCmd, { timeout: 60000 });
-    steps.push("Deployed ✓");
-
-    // Cleanup local tar
-    try { fs.unlinkSync(tarPath); } catch {}
-
-    // Phase 3B: audit log
     logEvent({
       email: session.email,
-      action: "publish",
+      action: isProduction ? "publish_production" : "publish_staging",
       slug,
-      deploy_hash: deployHash,
+      deploy_hash: result.deployHash,
     });
 
     return NextResponse.json({
       ok: true,
-      domain,
-      steps,
-      deploy_hash: deployHash,
-      build: { stdout: buildOut, stderr: buildErr },
+      verified: true,
+      domain: result.domain,
+      siteStatus,
+      steps: result.steps,
+      deploy_hash: result.deployHash,
+      build: { stdout: result.stdout, stderr: result.stderr },
     });
   } catch (error: unknown) {
-    // Cleanup tar on failure
-    try { if (fs.existsSync(tarPath)) fs.unlinkSync(tarPath); } catch {}
-
     const err = error as { message?: string; stdout?: string; stderr?: string };
+    const sanitize = (s: string) =>
+      s.replace(/\/Users\/[^\s:]+/g, "[path]").replace(/\/opt\/[^\s:]+/g, "[path]");
     return NextResponse.json(
       {
         error: "Publish failed",
-        steps,
-        message: err.message || "Unknown error",
-        stdout: err.stdout || "",
-        stderr: err.stderr || "",
+        message: sanitize(err.message || "Unknown error"),
       },
       { status: 500 }
     );
+  } finally {
+    publishLocks.delete(slug);
   }
 }

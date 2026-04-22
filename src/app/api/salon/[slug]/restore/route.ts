@@ -11,8 +11,9 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getSalonSiteDir, listSalonConfigBackups, restoreSalonConfig } from "@/lib/salons";
-import { requireSession } from "@/lib/auth";
+import { requireSalonAccess } from "@/lib/auth";
 import { logEvent } from "@/lib/audit";
+import path from "path";
 
 export const dynamic = "force-dynamic";
 
@@ -21,10 +22,9 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ slug: string }> }
 ) {
-  const auth = await requireSession(request);
-  if ("response" in auth) return auth.response;
-
   const { slug } = await params;
+  const auth = await requireSalonAccess(request, slug);
+  if ("response" in auth) return auth.response;
 
   const siteDir = getSalonSiteDir(slug);
   if (!siteDir) {
@@ -40,11 +40,10 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ slug: string }> }
 ) {
-  const auth = await requireSession(request);
+  const { slug } = await params;
+  const auth = await requireSalonAccess(request, slug);
   if ("response" in auth) return auth.response;
   const { session } = auth;
-
-  const { slug } = await params;
 
   let body: { backup?: string } = {};
   try {
@@ -71,6 +70,16 @@ export async function POST(
   const siteDir = getSalonSiteDir(slug);
   if (!siteDir) {
     return NextResponse.json({ error: "Salon not found" }, { status: 404 });
+  }
+
+  // Path traversal guard: resolved backup path must stay inside the config dir
+  const configDir = path.join(siteDir, "config");
+  const resolvedBackupPath = path.resolve(configDir, body.backup);
+  if (!resolvedBackupPath.startsWith(path.resolve(configDir) + path.sep)) {
+    return NextResponse.json(
+      { error: "Invalid backup filename" },
+      { status: 400 }
+    );
   }
 
   const success = restoreSalonConfig(slug, body.backup);

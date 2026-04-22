@@ -151,3 +151,7 @@
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: oklch(0.3 0 0); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: oklch(0.4 0 0); }
+
+/* Hide scrollbar on mobile tab nav */
+.scrollbar-none::-webkit-scrollbar { display: none; }
+.scrollbar-none { -ms-overflow-style: none; scrollbar-width: none; }

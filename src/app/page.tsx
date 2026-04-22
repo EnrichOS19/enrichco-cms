@@ -18,6 +18,7 @@ import {
   Layers,
   Image as ImageIcon,
   LogOut,
+  Settings,
 } from "lucide-react";
 
 interface SalonSummary {
@@ -29,6 +30,8 @@ interface SalonSummary {
   phone: string;
   serviceCount: number;
   galleryCount: number;
+  domainOwnership?: "enrichco" | "client";
+  websiteManager?: "ai-team" | "marketing-team";
 }
 
 const STATUS_CONFIG = {
@@ -59,20 +62,28 @@ export default function DashboardPage() {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<StatusFilter>("All");
   const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [userRole, setUserRole] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/salons")
-      .then((r) => r.json())
+      .then((r) => {
+        if (r.status === 401) { window.location.href = "/login"; return []; }
+        if (!r.ok) return [];
+        return r.json();
+      })
       .then((data) => {
-        setSalons(data);
+        if (Array.isArray(data)) setSalons(data);
         setLoading(false);
       })
       .catch(() => setLoading(false));
 
     fetch("/api/auth/session")
-      .then((r) => (r.ok ? r.json() : null))
+      .then((r) => {
+        if (r.status === 401) { window.location.href = "/login"; return null; }
+        return r.ok ? r.json() : null;
+      })
       .then((data) => {
-        if (data?.email) setUserEmail(data.email);
+        if (data?.email) { setUserEmail(data.email); setUserRole(data.role); }
       })
       .catch(() => {});
   }, []);
@@ -111,6 +122,15 @@ export default function DashboardPage() {
           {userEmail && (
             <div className="flex items-center gap-3">
               <span className="text-xs text-muted-foreground">{userEmail}</span>
+              {userRole === "superadmin" && (
+                <Link
+                  href="/admin"
+                  className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <Settings className="h-3.5 w-3.5" />
+                  Admin
+                </Link>
+              )}
               <button
                 onClick={async () => {
                   await fetch("/api/auth/logout", { method: "POST" });
@@ -243,6 +263,24 @@ export default function DashboardPage() {
                         <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-2">
                           <Phone className="h-3 w-3" />
                           <span className="font-mono">{salon.phone}</span>
+                        </div>
+                      )}
+
+                      {/* Ownership badges */}
+                      {(salon.websiteManager || salon.domainOwnership) && (
+                        <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                          {salon.websiteManager === "ai-team" && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-400 border border-violet-500/20 font-medium">AI Team</span>
+                          )}
+                          {salon.websiteManager === "marketing-team" && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-orange-500/15 text-orange-400 border border-orange-500/20 font-medium">Marketing</span>
+                          )}
+                          {salon.domainOwnership === "enrichco" && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-400 border border-cyan-500/20 font-medium">Our Domain</span>
+                          )}
+                          {salon.domainOwnership === "client" && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 border border-amber-500/20 font-medium">Client Domain</span>
+                          )}
                         </div>
                       )}
 

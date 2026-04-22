@@ -23,6 +23,20 @@ if (process.env.CMS_AUTH_DISABLED && process.env.NODE_ENV === "production") {
 const nextConfig: NextConfig = {
   output: "standalone",
   serverExternalPackages: ["better-sqlite3"],
+  rewrites: async () => [
+    { source: "/guide", destination: "/guide.html" },
+  ],
+  headers: async () => [
+    {
+      source: "/(.*)",
+      headers: [
+        { key: "X-Content-Type-Options", value: "nosniff" },
+        { key: "X-Frame-Options", value: "DENY" },
+        { key: "X-XSS-Protection", value: "1; mode=block" },
+        { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+      ],
+    },
+  ],
 };
 
 export default nextConfig;

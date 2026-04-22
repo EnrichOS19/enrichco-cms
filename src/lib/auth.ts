@@ -12,7 +12,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { getSession, type DbSession } from "./db";
+import { getSession, isStaffRole, userHasSalonAccess, type DbSession, type UserRole } from "./db";
 
 export const COOKIE_NAME = "cms-session";
 export const MAX_AGE = 8 * 60 * 60; // 8 hours (matches SESSION_TTL_SECONDS in db.ts)
@@ -24,9 +24,9 @@ export interface Session {
 }
 
 /** True when auth enforcement should be skipped. Only valid in local dev.
- *  Set CMS_AUTH_DISABLED=*** to bypass (matches npm test/dev:test scripts). */
+ *  Set CMS_AUTH_DISABLED=true to bypass (matches npm test/dev:test scripts). */
 export function isAuthDisabled(): boolean {
-  return process.env.CMS_AUTH_DISABLED === "***";
+  return process.env.CMS_AUTH_DISABLED === "true";
 }
 
 /**
@@ -38,7 +38,7 @@ export async function getSessionFromRequest(
   request: NextRequest
 ): Promise<Session | null> {
   if (isAuthDisabled()) {
-    return { id: "dev", email: "dev@enrichco.us", role: "admin" };
+    return { id: "dev", email: "dev@enrichco.us", role: "superadmin" };
   }
 
   const token = request.cookies.get(COOKIE_NAME)?.value;
@@ -55,7 +55,7 @@ export async function getSessionFromRequest(
  */
 export async function getSessionFromCookies(): Promise<Session | null> {
   if (isAuthDisabled()) {
-    return { id: "dev", email: "dev@enrichco.us", role: "admin" };
+    return { id: "dev", email: "dev@enrichco.us", role: "superadmin" };
   }
 
   const cookieStore = await cookies();
@@ -93,7 +93,7 @@ export async function requireSession(
 }
 
 /**
- * requireAdmin — like requireSession but also enforces admin role.
+ * requireAdmin — like requireSession but also enforces admin or superadmin role.
  */
 export async function requireAdmin(
   request: NextRequest
@@ -101,7 +101,7 @@ export async function requireAdmin(
   const auth = await requireSession(request);
   if ("response" in auth) return auth;
 
-  if (auth.session.role !== "admin") {
+  if (auth.session.role !== "admin" && auth.session.role !== "superadmin") {
     return {
       response: NextResponse.json(
         { error: "Forbidden — admin role required" },
@@ -110,4 +110,67 @@ export async function requireAdmin(
     };
   }
   return auth;
+}
+
+/**
+ * requireSuperAdmin — enforces superadmin role only.
+ */
+export async function requireSuperAdmin(
+  request: NextRequest
+): Promise<{ session: Session } | { response: NextResponse }> {
+  const auth = await requireSession(request);
+  if ("response" in auth) return auth;
+
+  if (auth.session.role !== "superadmin") {
+    return {
+      response: NextResponse.json(
+        { error: "Forbidden — super admin access required" },
+        { status: 403 }
+      ),
+    };
+  }
+  return auth;
+}
+
+/**
+ * requireSalonAccess — use on any route that edits a specific salon.
+ *
+ * - Staff roles (superadmin, admin, support) pass through — they have access
+ *   to all salons by policy.
+ * - "salon_owner" must have an explicit grant in the users_salons table for
+ *   this slug, otherwise 403.
+ * - Unrecognized roles are 403.
+ *
+ * Usage:
+ *   const auth = await requireSalonAccess(request, slug);
+ *   if ('response' in auth) return auth.response;
+ *   const { session } = auth;
+ */
+export async function requireSalonAccess(
+  request: NextRequest,
+  slug: string
+): Promise<{ session: Session } | { response: NextResponse }> {
+  const sessionCheck = await requireSession(request);
+  if ("response" in sessionCheck) return sessionCheck;
+  const { session } = sessionCheck;
+
+  const role = session.role as UserRole;
+  if (isStaffRole(role)) return { session };
+
+  if (role === "salon_owner") {
+    if (userHasSalonAccess(session.email, slug)) return { session };
+    return {
+      response: NextResponse.json(
+        { error: "Forbidden — you do not have access to this salon" },
+        { status: 403 }
+      ),
+    };
+  }
+
+  return {
+    response: NextResponse.json(
+      { error: "Forbidden — your role cannot edit salons" },
+      { status: 403 }
+    ),
+  };
 }

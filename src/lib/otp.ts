@@ -1,19 +1,18 @@
 /**
  * OTP email sender via SendGrid.
- *
- * If SENDGRID_API_KEY is not set, falls back to console logging
- * so the flow can be tested end-to-end in development.
+ * Falls back to console logging if SENDGRID_API_KEY is not set.
  */
 
 const SENDGRID_KEY = process.env.SENDGRID_API_KEY;
 const FROM_EMAIL = process.env.OTP_FROM_EMAIL ?? "noreply@enrichco.us";
-const FROM_NAME = process.env.OTP_FROM_NAME ?? "EnrichCo CMS";
+const FROM_NAME = process.env.OTP_FROM_NAME ?? "EnrichCo";
 
 interface SendOtpResult {
   ok: boolean;
   provider: "sendgrid" | "console";
   messageId?: string;
   code?: string; // only populated in console mode
+  error?: string; // populated on failure
 }
 
 /**
@@ -82,7 +81,6 @@ export async function sendOtpEmail(
   const textBody = `Your EnrichCo CMS verification code is: ${code}\n\nThis code expires in 5 minutes. If you did not request this, ignore this email.`;
 
   if (!SENDGRID_KEY) {
-    // Console fallback — log the code so we can test the flow
     console.log(`[OTP] Would send to ${email} — code: ${code}`);
     return { ok: true, provider: "console", code };
   }

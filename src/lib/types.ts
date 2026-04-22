@@ -7,7 +7,7 @@ export interface SalonHours {
 export interface ServiceItem {
   name: string;
   description?: string;
-  price: string;
+  price?: string;
   duration?: string;
 }
 
@@ -22,35 +22,36 @@ export interface ServiceCategory {
 
 export interface GalleryImage {
   src: string;
-  alt: string;
+  alt?: string;
 }
 
 export interface SalonConfig {
   name: string;
-  tagline: string;
-  description: string;
+  tagline?: string;
+  description?: string;
   address: {
-    street: string;
-    city: string;
-    state: string;
-    zip: string;
-    full: string;
+    street?: string;
+    city?: string;
+    state?: string;
+    zip?: string;
+    full?: string;
     googleMapsEmbed?: string;
   };
-  phone: string;
+  phone?: string;
   phoneRaw?: string;
-  email: string;
-  hours: SalonHours[];
-  social: {
+  email?: string;
+  hours?: SalonHours[];
+  social?: {
     facebook?: string;
     instagram?: string;
     yelp?: string;
     google?: string;
   };
-  booking: {
-    url: string;
+  booking?: {
+    url?: string;
     provider?: string;
     placeholder?: boolean;
+    label?: string;
   };
   branding: {
     primaryColor: string;
@@ -64,10 +65,17 @@ export interface SalonConfig {
     accentColor: string;
     fontHeading?: string;
     fontBody?: string;
+    logo?: string;
+    logoHasName?: boolean;
   };
-  meta: {
-    title: string;
-    description: string;
+  domain?: string;
+  stagingDomain?: string;
+  siteStatus?: "staging" | "production";
+  domainOwnership?: "enrichco" | "client";
+  websiteManager?: "ai-team" | "marketing-team";
+  meta?: {
+    title?: string;
+    description?: string;
     keywords?: string;
     ogImage?: string;
     url?: string;
@@ -78,8 +86,8 @@ export interface SalonConfig {
     sanitation?: string;
     values?: string[];
   };
-  services: ServiceCategory[];
-  gallery: GalleryImage[];
+  services?: ServiceCategory[];
+  gallery?: GalleryImage[];
   [key: string]: unknown;
 }
 
@@ -92,5 +100,7 @@ export interface SalonSummary {
   phone: string;
   serviceCount: number;
   galleryCount: number;
+  domainOwnership?: "enrichco" | "client";
+  websiteManager?: "ai-team" | "marketing-team";
   dirName: string;
 }

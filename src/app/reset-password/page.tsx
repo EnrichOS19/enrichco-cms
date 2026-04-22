@@ -43,9 +43,12 @@ function ResetForm() {
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.admin_reset_required
-          ? "Online password reset is not yet available. Please contact your system administrator."
-          : (data.error ?? "Reset failed — please try again"));
+        setError(data.error ?? "Reset failed — please try again");
+        return;
+      }
+      // 202 = admin must complete the reset; 200 = fully reset
+      if (data.admin_reset_required) {
+        setError("Online password reset is not yet available. Please contact your system administrator to complete the reset.");
         return;
       }
       setSuccess(true);

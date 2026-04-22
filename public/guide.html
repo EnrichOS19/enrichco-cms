@@ -1,0 +1,890 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EnrichCo Salon CMS — User Guide</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #0f0f0f;
+    color: #e5e5e5;
+    line-height: 1.65;
+    padding: 0;
+  }
+  .page-layout {
+    display: flex;
+    min-height: 100vh;
+  }
+  /* ── Sticky sidebar TOC (desktop) ── */
+  .toc-sidebar {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    width: 240px;
+    min-width: 240px;
+    overflow-y: auto;
+    background: #0a0a0a;
+    border-right: 1px solid #1f1f1f;
+    padding: 28px 20px 40px;
+    scrollbar-width: thin;
+    scrollbar-color: #333 transparent;
+  }
+  .toc-sidebar::-webkit-scrollbar { width: 4px; }
+  .toc-sidebar::-webkit-scrollbar-track { background: transparent; }
+  .toc-sidebar::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
+  .toc-sidebar .toc-brand {
+    font-size: 13px;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 4px;
+    letter-spacing: -0.01em;
+  }
+  .toc-sidebar .toc-subtitle {
+    font-size: 10px;
+    color: #555;
+    margin-bottom: 24px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .toc-sidebar ol { list-style: none; margin: 0; padding: 0; }
+  .toc-sidebar li { margin: 0; }
+  .toc-sidebar a {
+    display: block;
+    padding: 7px 10px;
+    border-radius: 6px;
+    color: #888;
+    text-decoration: none;
+    font-size: 12.5px;
+    line-height: 1.35;
+    transition: all 0.15s;
+  }
+  .toc-sidebar a:hover { color: #e5e5e5; background: #1a1a1a; }
+  .toc-sidebar a.active { color: #c7d2fe; background: #1a1a2e; font-weight: 500; }
+  /* ── Mobile TOC toggle ── */
+  .toc-mobile-toggle {
+    display: none;
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    background: #0a0a0a;
+    border-bottom: 1px solid #1f1f1f;
+    padding: 12px 20px;
+    cursor: pointer;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  .toc-mobile-toggle span {
+    font-size: 13px;
+    font-weight: 600;
+    color: #a5b4fc;
+  }
+  .toc-mobile-toggle .chevron {
+    float: right;
+    color: #555;
+    font-size: 14px;
+    transition: transform 0.2s;
+  }
+  .toc-mobile-toggle.open .chevron { transform: rotate(180deg); }
+  .toc-mobile-list {
+    display: none;
+    background: #0a0a0a;
+    border-bottom: 1px solid #1f1f1f;
+    padding: 8px 20px 16px;
+  }
+  .toc-mobile-list.open { display: block; }
+  .toc-mobile-list ol { list-style: none; margin: 0; padding: 0; columns: 2; column-gap: 16px; }
+  .toc-mobile-list li { break-inside: avoid; }
+  .toc-mobile-list a { display: block; padding: 5px 0; color: #888; text-decoration: none; font-size: 13px; }
+  .toc-mobile-list a:hover { color: #c7d2fe; }
+  /* ── Content column ── */
+  .container {
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 40px 40px 40px 48px;
+    flex: 1;
+    min-width: 0;
+  }
+  /* ── Hide old inline TOC (replaced by sidebar) ── */
+  .toc-inline { display: none; }
+  /* ── Responsive ── */
+  @media (max-width: 860px) {
+    .toc-sidebar { display: none; }
+    .toc-mobile-toggle { display: block; }
+    .container { padding: 24px 20px; }
+  }
+  header {
+    border-bottom: 1px solid #2a2a2a;
+    padding-bottom: 28px;
+    margin-bottom: 40px;
+  }
+  h1 { font-size: 30px; font-weight: 700; color: #fff; margin-bottom: 6px; letter-spacing: -0.02em; }
+  .subtitle { color: #888; font-size: 14px; }
+  html { scroll-behavior: smooth; }
+  h2 {
+    font-size: 22px;
+    font-weight: 600;
+    color: #fff;
+    margin: 48px 0 16px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #1f1f1f;
+    letter-spacing: -0.01em;
+    scroll-margin-top: 24px;
+  }
+  h3 { font-size: 15px; font-weight: 600; color: #e5e5e5; margin: 24px 0 10px; scroll-margin-top: 24px; }
+  h4 { font-size: 13px; font-weight: 600; color: #d4d4d4; margin: 14px 0 6px; }
+  p { color: #a3a3a3; font-size: 14px; margin-bottom: 12px; }
+  ul, ol { color: #a3a3a3; font-size: 14px; margin: 8px 0 14px 24px; }
+  li { margin-bottom: 6px; }
+  .lead { color: #d4d4d4; font-size: 15px; }
+  .note {
+    background: #1a1a2e;
+    border-left: 3px solid #6366f1;
+    padding: 14px 18px;
+    border-radius: 0 6px 6px 0;
+    font-size: 13px;
+    color: #a5b4fc;
+    margin: 18px 0;
+  }
+  .warn {
+    background: #1f1503;
+    border-left: 3px solid #f59e0b;
+    padding: 14px 18px;
+    border-radius: 0 6px 6px 0;
+    font-size: 13px;
+    color: #fcd34d;
+    margin: 18px 0;
+  }
+  .tip {
+    background: #0a1f1a;
+    border-left: 3px solid #10b981;
+    padding: 14px 18px;
+    border-radius: 0 6px 6px 0;
+    font-size: 13px;
+    color: #6ee7b7;
+    margin: 18px 0;
+  }
+  code {
+    background: #1f1f1f;
+    color: #a78bfa;
+    padding: 2px 7px;
+    border-radius: 4px;
+    font-size: 12.5px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    margin: 14px 0 22px;
+  }
+  th {
+    text-align: left;
+    padding: 10px 12px;
+    background: #1a1a1a;
+    color: #737373;
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    border-bottom: 1px solid #2a2a2a;
+  }
+  td {
+    padding: 11px 12px;
+    border-bottom: 1px solid #1a1a1a;
+    color: #a3a3a3;
+    vertical-align: top;
+  }
+  td strong { color: #e5e5e5; font-weight: 600; }
+  tr:last-child td { border-bottom: none; }
+  ol.steps {
+    counter-reset: step-counter;
+    list-style: none;
+    padding-left: 0;
+    margin: 14px 0;
+  }
+  ol.steps > li {
+    counter-increment: step-counter;
+    position: relative;
+    padding: 12px 16px 12px 48px;
+    margin-bottom: 8px;
+    background: #131313;
+    border: 1px solid #222;
+    border-radius: 8px;
+    color: #d4d4d4;
+    font-size: 14px;
+  }
+  ol.steps > li::before {
+    content: counter(step-counter);
+    position: absolute;
+    left: 14px;
+    top: 12px;
+    width: 22px;
+    height: 22px;
+    background: #6366f1;
+    color: #fff;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 700;
+    font-family: 'SF Mono', monospace;
+  }
+  ol.steps > li strong { color: #fff; }
+  .btn {
+    display: inline-block;
+    padding: 5px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    margin: 0 2px;
+    vertical-align: middle;
+    white-space: nowrap;
+  }
+  .btn-primary  { background: #312e81; color: #c7d2fe; border: 1px solid #4338ca; }
+  .btn-preview  { background: #1e293b; color: #93c5fd; border: 1px solid #334155; }
+  .btn-golive   { background: #052e16; color: #4ade80; border: 1px solid #166534; }
+  .btn-secondary { background: #1f1f1f; color: #d4d4d4; border: 1px solid #2a2a2a; }
+  .kbd {
+    background: #1a1a1a;
+    border: 1px solid #2a2a2a;
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    padding: 2px 7px;
+    font-family: 'SF Mono', monospace;
+    font-size: 12px;
+    color: #e5e5e5;
+  }
+  .role {
+    display: inline-block;
+    padding: 2px 9px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    margin: 0 2px;
+  }
+  .r-super   { background: #3b0764; color: #d8b4fe; }
+  .r-admin   { background: #052e16; color: #4ade80; }
+  .r-support { background: #0c1a3d; color: #60a5fa; }
+  .pill {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 500;
+    margin: 0 2px;
+  }
+  .p-saving  { background: #1a1a1a; color: #a3a3a3; }
+  .p-saved   { background: #052e16; color: #4ade80; }
+  .p-error   { background: #2d0a0a; color: #fca5a5; }
+  .p-editing { background: #1f1503; color: #fcd34d; }
+  .p-prod    { background: #052e16; color: #4ade80; }
+  .p-stage   { background: #0c1a3d; color: #60a5fa; }
+  footer {
+    margin-top: 60px;
+    padding-top: 24px;
+    border-top: 1px solid #1f1f1f;
+    color: #555;
+    font-size: 12px;
+    text-align: center;
+  }
+  /* old inline toc — removed, sidebar replaces it */
+  .hero-card {
+    background: linear-gradient(135deg, #0c1a3d 0%, #1a1a2e 100%);
+    border: 1px solid #334155;
+    border-radius: 12px;
+    padding: 24px 28px;
+    margin: 24px 0 32px;
+  }
+  .hero-card h3 {
+    color: #c7d2fe;
+    margin-top: 0;
+    font-size: 16px;
+  }
+  .hero-card p { color: #a5b4fc; margin: 0; font-size: 14px; }
+  .hero-card code { background: rgba(255,255,255,0.08); color: #fff; }
+  hr.soft { border: none; border-top: 1px solid #1f1f1f; margin: 32px 0; }
+</style>
+</head>
+<body>
+<div class="page-layout">
+
+<!-- ── Sticky sidebar TOC (desktop) ── -->
+<nav class="toc-sidebar" id="tocSidebar">
+  <div class="toc-brand">Salon CMS</div>
+  <div class="toc-subtitle">User Guide</div>
+  <ol>
+    <li><a href="#signin">1. Signing in</a></li>
+    <li><a href="#dashboard">2. The dashboard</a></li>
+    <li><a href="#editor">3. The salon editor</a></li>
+    <li><a href="#autosave">4. How saving works</a></li>
+    <li><a href="#preview">5. Previewing changes</a></li>
+    <li><a href="#golive">6. Going live</a></li>
+    <li><a href="#tabs">7. Each tab explained</a></li>
+    <li style="padding-left:12px"><a href="#tab-info">Info</a></li>
+    <li style="padding-left:12px"><a href="#tab-hours">Hours</a></li>
+    <li style="padding-left:12px"><a href="#tab-services">Services</a></li>
+    <li style="padding-left:12px"><a href="#tab-gallery">Gallery</a></li>
+    <li style="padding-left:12px"><a href="#tab-design">Design</a></li>
+    <li style="padding-left:12px"><a href="#tab-about">About</a></li>
+    <li style="padding-left:12px"><a href="#tab-blog">Blog</a></li>
+    <li style="padding-left:12px"><a href="#tab-seo">SEO</a></li>
+    <li style="padding-left:12px"><a href="#tab-settings">Settings</a></li>
+    <li><a href="#roles">8. Roles &amp; permissions</a></li>
+    <li><a href="#troubleshoot">9. Troubleshooting</a></li>
+    <li><a href="#agent-template">10. Agent template workflow</a></li>
+    <li><a href="#help">11. Getting help</a></li>
+  </ol>
+</nav>
+
+<!-- ── Mobile TOC (sticky top bar) ── -->
+<div class="toc-mobile-toggle" id="tocMobileToggle" onclick="this.classList.toggle('open');document.getElementById('tocMobileList').classList.toggle('open')">
+  <span>Contents</span>
+  <span class="chevron">&#9660;</span>
+</div>
+<div class="toc-mobile-list" id="tocMobileList">
+  <ol>
+    <li><a href="#signin" onclick="closeMobileToc()">1. Signing in</a></li>
+    <li><a href="#dashboard" onclick="closeMobileToc()">2. The dashboard</a></li>
+    <li><a href="#editor" onclick="closeMobileToc()">3. The salon editor</a></li>
+    <li><a href="#autosave" onclick="closeMobileToc()">4. How saving works</a></li>
+    <li><a href="#preview" onclick="closeMobileToc()">5. Previewing changes</a></li>
+    <li><a href="#golive" onclick="closeMobileToc()">6. Going live</a></li>
+    <li><a href="#tabs" onclick="closeMobileToc()">7. Each tab explained</a></li>
+    <li><a href="#roles" onclick="closeMobileToc()">8. Roles</a></li>
+    <li><a href="#troubleshoot" onclick="closeMobileToc()">9. Troubleshooting</a></li>
+    <li><a href="#agent-template" onclick="closeMobileToc()">10. Agent template workflow</a></li>
+    <li><a href="#help" onclick="closeMobileToc()">11. Getting help</a></li>
+  </ol>
+</div>
+
+<div class="container">
+
+<header>
+  <h1>EnrichCo Salon CMS</h1>
+  <p class="subtitle">Support team user guide &middot; Updated April 15, 2026</p>
+</header>
+
+<div class="hero-card">
+  <h3>What is this?</h3>
+  <p>The Salon CMS at <code>cms.enrichco.us</code> is where you edit every salon website. Type your change, wait 2 seconds — it saves. Click <span class="btn btn-preview">Preview</span> to see it on a test URL. Click <span class="btn btn-golive">Go Live</span> to push it to real customers.</p>
+</div>
+
+<!-- inline TOC hidden — sidebar replaces it -->
+
+<!-- ============================================================ -->
+<h2 id="signin">1. Signing in</h2>
+
+<p>You sign in with your <strong>IMS Next</strong> email and password (the same one that works at <code>imsnext.enrichco.us</code>).</p>
+
+<ol class="steps">
+  <li>Open <code>https://cms.enrichco.us</code> in your browser.</li>
+  <li>Type your <strong>email</strong> and <strong>password</strong>. Click <span class="btn btn-primary">Continue</span>.</li>
+  <li>We email you a <strong>6-digit code</strong>. Open your inbox, copy the code, paste it in.</li>
+  <li>Before clicking <span class="btn btn-primary">Verify &amp; Sign In</span>, choose:
+    <ul>
+      <li><strong>Keep me logged in for 30 days</strong> — stay signed in on this computer for a month. Uncheck on shared computers.</li>
+      <li><strong>Trust this browser — skip code next time</strong> — for 90 days, this browser won't ask for a code. Only check on your own work computer.</li>
+    </ul>
+  </li>
+  <li>Click <span class="btn btn-primary">Verify &amp; Sign In</span>. You're in.</li>
+</ol>
+
+<div class="warn">
+  <strong>Never check "Trust this browser" on a shared or public computer.</strong> Anyone who uses that browser can sign in as you with just the password for 90 days.
+</div>
+
+<h3>If the code doesn't arrive</h3>
+<ol>
+  <li>Check your spam folder. Emails come from <code>noreply@enrichco.us</code>.</li>
+  <li>Codes expire in <strong>5 minutes</strong>. If it's been longer, click <strong>&larr; Use a different account</strong>, sign in again to get a fresh code.</li>
+  <li>Still nothing? Ping Webber.</li>
+</ol>
+
+<h3>If login fails</h3>
+<p>The CMS shows the exact error from IMS Next. Common ones:</p>
+<ul>
+  <li><strong>"Invalid credentials"</strong> — wrong email or password. Try logging into <code>imsnext.enrichco.us</code> directly to check which is wrong.</li>
+  <li><strong>"Password must be at least 6 characters"</strong> — your IMS password is too short. Reset it in IMS Next first.</li>
+  <li><strong>"Unable to reach authentication server"</strong> — IMS Next is down. Wait a minute, try again. If it keeps failing, ping Webber.</li>
+</ul>
+
+<div class="note">
+  <strong>Your CMS login uses IMS Next only.</strong> If you've only ever used the old IMS at <code>ims.enrichco.us</code>, you may not have an IMS Next account yet. Ask Sean or Webber to set one up.
+</div>
+
+<p>There is <strong>no "Forgot password" link</strong> in the CMS. To reset your password, use <code>imsnext.enrichco.us</code> and come right back.</p>
+
+<!-- ============================================================ -->
+<h2 id="dashboard">2. The dashboard</h2>
+
+<p>After signing in, you land on the salon list. Every salon we manage is here.</p>
+
+<h3>What each card shows</h3>
+<ul>
+  <li><strong>Name</strong> of the salon, and its city + state.</li>
+  <li><strong>Status badge</strong> (right side of the card):
+    <ul>
+      <li><strong>Approved</strong> — has services, gallery photos, brand colors, and a real booking URL. Ready for customers.</li>
+      <li><strong>Demo Ready</strong> — has services, gallery, brand colors — but still needs a booking URL.</li>
+      <li><strong>New</strong> — missing services, gallery, or branding. Not ready yet.</li>
+    </ul>
+  </li>
+  <li><strong>Count of services</strong> and <strong>gallery photos</strong>.</li>
+  <li>Phone number, if set.</li>
+</ul>
+
+<h3>Finding a salon</h3>
+<ol class="steps">
+  <li>Type in the <strong>search box</strong> — it matches name, city, or state.</li>
+  <li>Or click a <strong>filter tab</strong>: <em>All</em>, <em>Approved</em>, <em>Demo Ready</em>, <em>New</em>.</li>
+  <li>Click the salon's card to open its editor.</li>
+</ol>
+
+<h3>Top bar</h3>
+<ul>
+  <li><strong>Your email</strong> (shows you're signed in).</li>
+  <li><strong>Admin</strong> link — only visible to super admin.</li>
+  <li><strong>Sign out</strong> — ends your session on this computer.</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="editor">3. The salon editor</h2>
+
+<p>Click any salon on the dashboard. You land on its editor, which has three parts:</p>
+
+<ol>
+  <li><strong>Left sidebar (desktop)</strong> or <strong>top bar (mobile)</strong> — salon name, current domain, status badge, and 9 tabs.</li>
+  <li><strong>Main area</strong> — the tab you're on, with all its editable fields.</li>
+  <li><strong>Bottom bar</strong> — save status (left) and <span class="btn btn-preview">Preview</span> / <span class="btn btn-golive">Go Live</span> buttons (right).</li>
+</ol>
+
+<h3>Status badge in sidebar</h3>
+<table>
+  <tr><th>Badge</th><th>Meaning</th></tr>
+  <tr><td><span class="pill p-prod">Production</span></td><td>This salon is live. <span class="btn btn-golive">Go Live</span> will push to real customers.</td></tr>
+  <tr><td><span class="pill p-stage">Staging</span></td><td>This salon is not launched yet. <span class="btn btn-golive">Go Live</span> needs a Production domain configured in Settings first.</td></tr>
+  <tr><td><span class="pill p-editing">Unsaved</span></td><td>You have changes that haven't been autosaved yet (usually appears for a second or two).</td></tr>
+</table>
+
+<h3>The domain link</h3>
+<p>Below the salon name in the sidebar, there's a clickable link with the salon's domain. Click it to open the live or staging site in a new tab.</p>
+
+<!-- ============================================================ -->
+<h2 id="autosave">4. How saving works</h2>
+
+<p class="lead">There is no "Save" button. The CMS saves automatically about 2 seconds after you stop typing.</p>
+
+<h3>Save status (bottom bar)</h3>
+<table>
+  <tr><th>You see</th><th>Means</th></tr>
+  <tr><td><span class="pill p-editing">Editing...</span></td><td>You just typed something. Save is about to fire.</td></tr>
+  <tr><td><span class="pill p-saving">Saving...</span></td><td>Writing to the server right now.</td></tr>
+  <tr><td><span class="pill p-saved">All changes saved</span></td><td>Safe to close the tab.</td></tr>
+  <tr><td><span class="pill p-error">Save failed — click to retry</span></td><td>Something went wrong. Click the message to try again.</td></tr>
+</table>
+
+<h3>Force a save right now</h3>
+<p>Hit <span class="kbd">Cmd</span>+<span class="kbd">S</span> (Mac) or <span class="kbd">Ctrl</span>+<span class="kbd">S</span> (Windows). It saves immediately without waiting for the 2-second debounce.</p>
+
+<div class="tip">
+  <strong>Leaving the page with unsaved changes?</strong> The browser warns you. Wait for "All changes saved" before closing.
+</div>
+
+<h3>If you see "Fix validation errors before saving"</h3>
+<p>A field has bad data (for example, an empty required field). Scroll to find the red error message, fix the field, and it'll save. The red banner disappears on successful save.</p>
+
+<!-- ============================================================ -->
+<h2 id="preview">5. Previewing changes</h2>
+
+<p>Preview lets you see your edits on a real test URL before pushing to customers. Use it every time before <span class="btn btn-golive">Go Live</span>.</p>
+
+<ol class="steps">
+  <li>Make your changes. Wait for <span class="pill p-saved">All changes saved</span> in the bottom bar.</li>
+  <li>Click <span class="btn btn-preview">Preview</span> in the bottom-right.</li>
+  <li>A new browser tab opens with the staging URL (for example <code>happy-nails-spa.pages.dev</code>).</li>
+  <li>The CMS builds the updated site in the background &mdash; takes 30 to 60 seconds. You'll see a toast say <strong>"Staging updated with your changes"</strong> when it's done.</li>
+  <li><strong>Reload the preview tab</strong> to see your edits.</li>
+</ol>
+
+<div class="warn">
+  <strong>Browser blocked the popup?</strong> Allow popups for <code>cms.enrichco.us</code>. The CMS only ever opens the staging URL — nothing else.
+</div>
+
+<div class="note">
+  <strong>No staging domain configured?</strong> You'll see an error: <em>"No staging domain configured. Set one in Settings."</em> Open the <strong>Settings</strong> tab and fill in <strong>Staging Domain</strong>, then try again.
+</div>
+
+<!-- ============================================================ -->
+<h2 id="golive">6. Going live (pushing to production)</h2>
+
+<p><span class="btn btn-golive">Go Live</span> pushes your changes to the real customer-facing site. Customers see it within a minute.</p>
+
+<ol class="steps">
+  <li>Always <strong>preview first</strong>. Make sure staging looks right.</li>
+  <li>Click <span class="btn btn-golive">Go Live</span> in the bottom-right.</li>
+  <li>A dialog pops up: <strong>"Go Live?"</strong> with the production domain in bold (e.g. <code>happynailandspa.com</code>).</li>
+  <li>Read the domain carefully. If it's correct, click <span class="btn btn-golive">Go Live</span>. If it's wrong or you're not ready, click <span class="btn btn-secondary">Cancel</span>.</li>
+  <li>Wait for the toast to say <strong>"Live site updated!"</strong>. That's it — customers see your changes on the next page reload.</li>
+</ol>
+
+<div class="warn">
+  <strong>Go Live is not reversible from the CMS UI.</strong> If you push something wrong, you have to either fix it and Go Live again, or ask Webber to run a rollback. Preview first.
+</div>
+
+<div class="note">
+  <strong>The Go Live button is disabled if:</strong>
+  <ul style="margin-top:6px">
+    <li>Your last save failed — fix validation errors first.</li>
+    <li>A Preview build is still running — wait for it to finish.</li>
+    <li>You're a <span class="role r-support">Support</span> user — only <span class="role r-admin">Admin</span> and <span class="role r-super">Super Admin</span> can Go Live.</li>
+  </ul>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="tabs">7. Each tab explained</h2>
+
+<p>Every salon has the same 9 tabs in the sidebar. Here's what's in each.</p>
+
+<h3 id="tab-info">Info</h3>
+<p><em>Basic salon details and contact info.</em></p>
+<ul>
+  <li><strong>Salon Name</strong> and <strong>Tagline</strong></li>
+  <li><strong>Description</strong> (paragraph)</li>
+  <li><strong>Logo</strong> — upload the salon's logo (JPG, PNG, WebP, or SVG, max 5MB). It shows in the header, footer, and browser tab on the live site. Click <strong>Replace Logo</strong> to upload a new one. Preview or Go Live to publish it.</li>
+  <li><strong>Phone</strong> and <strong>Email</strong></li>
+  <li><strong>Address</strong>: Street, City, State, ZIP (separate fields — the live site combines them)</li>
+</ul>
+
+<h3 id="tab-hours">Hours</h3>
+<p><em>Set your business hours for each day.</em></p>
+<p>One row per weekday. Type open and close times in plain English (for example <code>9:30 AM</code> or <code>7:00 PM</code>). Leave both blank for a closed day.</p>
+
+<h4>Starting from scratch?</h4>
+<p>If the hours list is empty, click <span class="btn btn-secondary">+ Add Default Schedule</span>. It fills in:</p>
+<ul>
+  <li>Monday&ndash;Saturday: 9:30 AM to 7:00 PM</li>
+  <li>Sunday: 11:00 AM to 5:00 PM</li>
+</ul>
+<p>Edit any row after. Use the trash icon to remove a day. Use <span class="btn btn-secondary">+ Add Day</span> to add more.</p>
+
+<h3 id="tab-services">Services</h3>
+<p><em>Manage service categories and pricing.</em></p>
+<p>Services are grouped into categories. For each service:</p>
+<ul>
+  <li><strong>Name</strong> — what it's called (e.g. <em>Classic Manicure</em>)</li>
+  <li><strong>Description</strong> — optional details (keep it short)</li>
+  <li><strong>Price</strong> — any format: <code>$45</code>, <code>45</code>, <code>from $30</code>, <code>$25&ndash;$40</code></li>
+</ul>
+
+<h4>Common edits</h4>
+<ol class="steps">
+  <li><strong>Add a category:</strong> Click <span class="btn btn-secondary">+ Add Category</span>, click the "New Category" text to rename it.</li>
+  <li><strong>Add a service:</strong> Click <span class="btn btn-secondary">+ Add Service</span> inside a category. Fill in name, price, optional description.</li>
+  <li><strong>Reorder services:</strong> Use the <strong>up/down arrows</strong> on the left side of each service row. The order in CMS = the order on the live site.</li>
+  <li><strong>Reorder categories:</strong> Use the <strong>up/down arrows</strong> next to the category name. Categories appear on the site in the same order.</li>
+  <li><strong>Delete a service:</strong> Click the trash icon next to it. Confirm.</li>
+  <li><strong>Delete a category:</strong> Click the trash icon next to the category name. This deletes all services in it.</li>
+</ol>
+
+<div class="tip">
+  <strong>Order matters.</strong> The live website shows services and categories in the exact same order as the CMS. Move items up/down to control what customers see first. Click Preview after reordering to verify.
+</div>
+
+<h3 id="tab-gallery">Gallery</h3>
+<p><em>Manage gallery photos.</em></p>
+
+<h4>Add a photo</h4>
+<ol class="steps">
+  <li>Click <span class="btn btn-secondary">+ Add Image</span> to add a blank row.</li>
+  <li>Either click <strong>Choose File</strong> in the row to upload (JPG, PNG, or WebP, up to 5 MB)</li>
+  <li>Or paste a full image URL into the first text box.</li>
+  <li>Type an <strong>Alt text</strong> description (helps accessibility and SEO).</li>
+</ol>
+
+<h4>Reorder or remove</h4>
+<ul>
+  <li><strong>Up / down arrows</strong> change the order.</li>
+  <li><strong>Trash icon</strong> removes the image from the gallery.</li>
+</ul>
+
+<div class="note">
+  <strong>Photo not loading?</strong> Some older galleries use Unsplash URLs that expire. If a photo shows as empty, re-upload it or paste a fresh URL.
+</div>
+
+<h3 id="tab-design">Design</h3>
+<p><em>Colors, fonts, and template selection.</em></p>
+
+<h4>Brand Colors</h4>
+<p>Nine color fields, each with a color picker and a hex input. Pick with the swatch or type a hex like <code>#6366f1</code>.</p>
+<ul>
+  <li><strong>Primary</strong>, <strong>Accent</strong>, <strong>Background</strong> — the three colors most templates use.</li>
+  <li><strong>Primary Light</strong>, <strong>Primary Dark</strong>, <strong>Surface</strong>, <strong>Surface Light</strong>, <strong>Text</strong>, <strong>Text Muted</strong> — fine-tune the look.</li>
+</ul>
+
+<h4>Typography</h4>
+<ul>
+  <li><strong>Heading Font</strong> — e.g. <em>Playfair Display</em></li>
+  <li><strong>Body Font</strong> — e.g. <em>Inter</em></li>
+</ul>
+
+<h4>Preview</h4>
+<p>A live preview box shows the salon name, tagline, and Primary/Accent color swatches using your current settings. Updates as you type.</p>
+
+<h4>Design Template</h4>
+<p>Below the preview, the Template Switcher lets you change the entire site layout. <strong>Your content is always preserved</strong> — only the visual design changes. Templates are built by Webber; ask before switching.</p>
+
+<h3 id="tab-about">About</h3>
+<p><em>Tell visitors about your salon.</em> Four paragraphs shown on the About page:</p>
+<ul>
+  <li><strong>Welcome Message</strong> — a warm intro at the top of About.</li>
+  <li><strong>Our Mission</strong> — what the salon stands for.</li>
+  <li><strong>Sanitation &amp; Safety</strong> — health and cleanliness practices.</li>
+  <li><strong>Our Values</strong> — list format. Put <strong>one value per line</strong> (for example: Quality craftsmanship &rarr; Enter &rarr; Customer satisfaction &rarr; Enter &rarr; Cleanliness).</li>
+</ul>
+
+<h3 id="tab-blog">Blog</h3>
+<p><em>Create and manage blog posts.</em></p>
+
+<h4>Two views</h4>
+<ul>
+  <li><strong>List view</strong> — cards for every post with thumbnail, title, date, category, and excerpt. Hover shows edit and delete buttons. Click a card to open it.</li>
+  <li><strong>Edit view</strong> — full post editor. Click <strong>&larr; Back to all posts</strong> to return to the list.</li>
+</ul>
+
+<h4>Add a new post</h4>
+<ol class="steps">
+  <li>Click <span class="btn btn-secondary">+ New Post</span> in the top-right of the list.</li>
+  <li>Fill in <strong>Title</strong>. The URL slug auto-generates from the title.</li>
+  <li>Set <strong>Date</strong>, <strong>Category</strong> (e.g. <em>Nail Care</em>), and <strong>Read Time</strong> (e.g. <code>5 min read</code>).</li>
+  <li>Paste a <strong>Featured Image URL</strong> (full URL starting with <code>https://</code>).</li>
+  <li>Write an <strong>Excerpt</strong> — a 1-2 sentence summary shown on the blog listing.</li>
+  <li>Write the <strong>Content</strong> in HTML. A live <strong>Preview</strong> shows how it renders.</li>
+  <li>Autosave handles the rest. Click <strong>&larr; Done editing</strong> to return to the list.</li>
+</ol>
+
+<h4>Delete a post</h4>
+<ul>
+  <li>From the list: hover the card, click the trash icon, confirm.</li>
+  <li>From edit view: click <strong>Delete Post</strong> at the bottom right.</li>
+</ul>
+
+<div class="note">
+  Content must be HTML. Use <code>&lt;p&gt;paragraph&lt;/p&gt;</code>, <code>&lt;h2&gt;heading&lt;/h2&gt;</code>, <code>&lt;ul&gt;&lt;li&gt;item&lt;/li&gt;&lt;/ul&gt;</code>. If you just type plain text, it all runs together.
+</div>
+
+<h3 id="tab-seo">SEO</h3>
+<p><em>Search engine optimization and social sharing.</em></p>
+<ul>
+  <li><strong>Page Title</strong> — what shows in browser tabs and Google results. Aim for 50&ndash;60 characters.</li>
+  <li><strong>Meta Description</strong> — Google's search snippet. The editor shows <em>"X / 160 characters"</em> — stay under 160.</li>
+  <li><strong>Keywords</strong> — comma-separated. Minor ranking impact today but still used by some indexes.</li>
+  <li><strong>Social Share Image URL</strong> — the image shown when someone shares the site on Facebook or iMessage. Must be a full URL (<code>https://...</code>).</li>
+  <li><strong>Canonical URL</strong> — the preferred URL for this site, usually the production domain.</li>
+</ul>
+
+<div class="warn">
+  <strong>The Social Share Image must be a full URL.</strong> Relative paths like <code>/images/photo.jpg</code> won't load on Facebook or iMessage.
+</div>
+
+<h3 id="tab-settings">Settings</h3>
+<p><em>Booking URL and social media links.</em> Also where you set domains and production status.</p>
+
+<h4>Booking</h4>
+<ul>
+  <li><strong>Booking URL</strong> — where the "Book Now" button sends customers. Usually the salon's Mango POS booking page.</li>
+</ul>
+
+<h4>Publishing</h4>
+<ul>
+  <li><strong>Site Status</strong> — dropdown with two choices:
+    <ul>
+      <li><strong>Staging &mdash; site is under construction</strong> — Go Live is disabled for this salon.</li>
+      <li><strong>Production &mdash; site is live</strong> — Go Live is enabled.</li>
+    </ul>
+  </li>
+  <li><strong>Staging Domain</strong> — the preview URL. Example: <code>nailsalon12.mangotemplates.us</code> or <code>happy-nails-spa.pages.dev</code>.</li>
+  <li><strong>Production Domain</strong> — the real customer domain. Example: <code>happynailandspa.com</code>.</li>
+</ul>
+
+<div class="warn">
+  <strong>Before switching to "Production"</strong>, make sure the production domain's DNS actually points to our server (<code>34.138.245.90</code>). If DNS is still parked or pointing somewhere else, <span class="btn btn-golive">Go Live</span> will succeed but customers will see a different site. Ask Vision or Webber if unsure.
+</div>
+
+<h4>Ownership &amp; Management</h4>
+<p>Two dropdowns that tell everyone who controls what:</p>
+<ul>
+  <li><strong>Domain Ownership</strong> — <em>EnrichCo</em> (we own the domain in GoDaddy) or <em>Client</em> (the salon owns it).</li>
+  <li><strong>Website Manager</strong> — <em>AI Team</em> (managed via this CMS, Next.js) or <em>Marketing Team</em> (managed via FTP, PHP templates).</li>
+</ul>
+<p>These show as colored badges on the dashboard cards so you can see at a glance.</p>
+
+<h4>Social Links</h4>
+<p>Full URLs for each platform — these show up in the footer of the live site:</p>
+<ul>
+  <li>Instagram</li>
+  <li>Facebook</li>
+  <li>Google (Google Business listing)</li>
+  <li>Yelp</li>
+</ul>
+<p>Leave blank if the salon doesn't use that platform — the icon won't appear on the live site.</p>
+
+<!-- ============================================================ -->
+<h2 id="roles">8. Roles &amp; what you can do</h2>
+
+<p>Every CMS user has one of three roles. The role comes from your IMS Next role the first time you sign in. Super Admin can change it later in the Admin page.</p>
+
+<table>
+  <tr><th>Action</th><th><span class="role r-support">Support</span></th><th><span class="role r-admin">Admin</span></th><th><span class="role r-super">Super Admin</span></th></tr>
+  <tr><td>Sign in / view dashboard</td><td>✓</td><td>✓</td><td>✓</td></tr>
+  <tr><td>Edit any salon (autosave)</td><td>✓</td><td>✓</td><td>✓</td></tr>
+  <tr><td>Upload gallery images</td><td>✓</td><td>✓</td><td>✓</td></tr>
+  <tr><td>Preview on staging</td><td>✓</td><td>✓</td><td>✓</td></tr>
+  <tr><td>Go Live (push to production)</td><td>✓</td><td>✓</td><td>✓</td></tr>
+  <tr><td>Switch design template</td><td>&mdash;</td><td>✓</td><td>✓</td></tr>
+  <tr><td>Rollback a publish</td><td>&mdash;</td><td>✓</td><td>✓</td></tr>
+  <tr><td>Manage team members</td><td>&mdash;</td><td>&mdash;</td><td>✓</td></tr>
+</table>
+
+<div class="note">
+  <strong>All roles</strong> can edit, preview, and go live. The difference is that only <span class="role r-admin">Admin</span> can switch templates and rollback, and only <span class="role r-super">Super Admin</span> can manage team members.
+</div>
+
+<!-- ============================================================ -->
+<h2 id="troubleshoot">9. Troubleshooting</h2>
+
+<h3>"Save failed — click to retry"</h3>
+<ol>
+  <li>Click the red message. It retries the save.</li>
+  <li>If it keeps failing, you probably have a validation error. Scroll the tab you're on for red text and fix it.</li>
+  <li>Still failing? Ping Webber with the salon name and what you were editing.</li>
+</ol>
+
+<h3>"Fix validation errors before saving" banner</h3>
+<p>Some field has bad data (empty required field, invalid phone, invalid URL). Scroll until you find a red message under a field, fix it, and save works again.</p>
+
+<h3>"Publish failed" after Go Live</h3>
+<p>Rare. Check that <strong>Production Domain</strong> in Settings is a real domain like <code>something.com</code>. If it is, ping Webber with the salon name and the error message.</p>
+
+<h3>Preview shows the old content</h3>
+<ol>
+  <li>The background build takes 30&ndash;60 seconds. <strong>Reload the preview tab</strong> after that.</li>
+  <li>If it still looks old after a minute, hard-reload: <span class="kbd">Cmd</span>+<span class="kbd">Shift</span>+<span class="kbd">R</span> (Mac) or <span class="kbd">Ctrl</span>+<span class="kbd">Shift</span>+<span class="kbd">R</span> (Windows).</li>
+</ol>
+
+<h3>Gallery photo shows empty</h3>
+<p>Older Unsplash URLs expire. Re-upload the photo from your computer, or paste a fresh URL.</p>
+
+<h3>Can't sign in — no OTP email</h3>
+<ol>
+  <li>Check spam. Sender is <code>noreply@enrichco.us</code>.</li>
+  <li>Try signing in again to get a new code (old codes expire in 5 minutes).</li>
+  <li>If it still doesn't arrive, your email may not have an IMS Next account. Ask Sean or Webber.</li>
+</ol>
+
+<!-- ============================================================ -->
+<h2 id="agent-template">10. Agent template workflow</h2>
+
+<p>This section is for AI agents (Webber and team) — not human operators. It explains how to read and write shared template components without breaking CMS state.</p>
+
+<h3>The three-copy problem</h3>
+<p>Every managed salon website exists in three places at once:</p>
+<ol>
+  <li><strong>Mac source</strong> — <code>/Users/aisquad/salon-websites/sites/&lt;slug&gt;/</code></li>
+  <li><strong>Server source</strong> — <code>/opt/enrich-cms/sites/&lt;slug&gt;/</code></li>
+  <li><strong>Live web root</strong> — <code>/var/www/&lt;domain&gt;/public/</code></li>
+</ol>
+<p>Shared components (Navigation, Footer, etc.) live in <strong>one canonical location</strong>: <code>/opt/enrich-cms/template/components/</code> on the server and <code>/Users/aisquad/salon-websites/template/components/</code> locally. They are injected at build time — never committed into individual site source.</p>
+
+<h3>Reading a shared component</h3>
+<p><code>GET /api/template/components/&lt;filename&gt;</code> — requires any authenticated session. Returns:</p>
+<pre><code>{
+  "filename": "Navigation.tsx",
+  "content": "...",
+  "sha256": "abc123..."
+}</code></pre>
+<p>Always save the <code>sha256</code> — you need it to write back.</p>
+
+<h3>Patching a shared component (safe, atomic)</h3>
+<p>Use <code>POST /api/template/batch-patch</code> — requires Super Admin. Supply the SHA you got from the read (compare-and-swap guard prevents blind overwrites):</p>
+<pre><code>POST /api/template/batch-patch
+{
+  "file": "Navigation.tsx",
+  "expected_sha256": "&lt;sha from GET&gt;",
+  "patches": [
+    { "old": "h-10 w-auto", "new": "h-14 w-auto" }
+  ]
+}</code></pre>
+<p>The server rejects the write with <strong>HTTP 409</strong> if the file changed since you read it, and <strong>HTTP 422</strong> if any patch string matched zero times. A backup (<code>.bak</code>) is created before every write.</p>
+
+<h3>Rebuilding sites after a template change</h3>
+<p>After changing a shared component, trigger a batch rebuild so all affected sites pick up the change:</p>
+<pre><code>POST /api/template/rebuild-all
+{ "dryRun": false }          // omit slugs to rebuild all production sites
+// or
+{ "slugs": ["happy-nails", "pino-nails"], "dryRun": true }  // subset + dry run</code></pre>
+<p>The route returns a <code>jobId</code> immediately. Poll status at:</p>
+<pre><code>GET /api/template/rebuild-all?jobId=&lt;id&gt;</code></pre>
+<p>The job runs sequentially (one site at a time), respects per-slug publish locks, and writes progress to <code>/tmp/rebuild-job-&lt;id&gt;.json</code>.</p>
+
+<h3>Agent workflow summary</h3>
+<ol>
+  <li>Read the component file → save SHA</li>
+  <li>Apply patches via <code>batch-patch</code> with that SHA</li>
+  <li>Start a <code>rebuild-all</code> job (or target specific slugs)</li>
+  <li>Poll until <code>done: true</code> — check <code>failed</code> count</li>
+  <li>Log the new SHA in the audit trail (done automatically)</li>
+</ol>
+
+<p class="note"><strong>Never write directly to site source files to change shared components.</strong> That creates drift between Mac source and server source. Always use the template API.</p>
+
+<!-- ============================================================ -->
+<h2 id="help">11. Getting help</h2>
+
+<p>Who to ping for what:</p>
+<ul>
+  <li><strong>Webber</strong> — CMS bugs, login trouble, publish errors, new salon setup, template changes, guide updates.</li>
+  <li><strong>Vision</strong> — DNS pointing issues, new domain setup, IMS Next account creation.</li>
+  <li><strong>Sean</strong> — role changes, super-admin approvals, anything else.</li>
+</ul>
+
+<p>This guide is the source of truth for how the CMS works. If something behaves differently from what's written here, tell Webber — it's either a bug in the CMS or an out-of-date guide.</p>
+
+<footer>
+  EnrichCo Salon CMS &middot; Updated April 15, 2026<br>
+  Hosted at <code>cms.enrichco.us/guide</code> &middot; Maintained by Webber
+</footer>
+
+</div>
+</div><!-- end page-layout -->
+
+<script>
+// Highlight active TOC link on scroll
+(function(){
+  var links = document.querySelectorAll('.toc-sidebar a[href^="#"]');
+  var ids = [];
+  links.forEach(function(a){ ids.push(a.getAttribute('href').slice(1)); });
+  function update(){
+    var scrollY = window.scrollY || document.documentElement.scrollTop;
+    var current = '';
+    ids.forEach(function(id){
+      var el = document.getElementById(id);
+      if(el && el.offsetTop - 120 <= scrollY) current = id;
+    });
+    links.forEach(function(a){
+      if(a.getAttribute('href') === '#' + current) a.classList.add('active');
+      else a.classList.remove('active');
+    });
+  }
+  window.addEventListener('scroll', update, {passive:true});
+  update();
+})();
+function closeMobileToc(){
+  document.getElementById('tocMobileToggle').classList.remove('open');
+  document.getElementById('tocMobileList').classList.remove('open');
+}
+</script>
+</body>
+</html>

@@ -47,7 +47,7 @@ function getDb(): Database.Database {
   return db;
 }
 
-export type AuditAction = "save" | "publish" | "upload" | "rollback" | "restore" | "template_switch";
+export type AuditAction = "save" | "publish" | "publish_staging" | "publish_production" | "publish_verify_failed_prod" | "publish_verify_failed_staging" | "upload" | "rollback" | "restore" | "template_switch" | "template_component_update" | "template_batch_patch" | "template_rebuild_all" | "template_rebuild_dry_run" | "salon_access_grant" | "salon_access_revoke";
 
 export interface AuditEntry {
   id: string;
@@ -101,6 +101,32 @@ export function getAllAuditLog(limit = 500): AuditEntry[] {
   return db.prepare(`
     SELECT * FROM audit_log ORDER BY timestamp DESC LIMIT ?
   `).all(limit) as AuditEntry[];
+}
+
+/**
+ * Find the audit entry for a slug that most likely corresponds to a given
+ * backup timestamp. Matches within +/- toleranceMs and returns the closest
+ * entry by absolute time delta, or null if none.
+ *
+ * Default tolerance is 5 seconds — the save → backup write → audit log insert
+ * happen in the same request so they're usually within tens of milliseconds,
+ * but disk + db latency can push that out a bit under load.
+ */
+export function findAuditEntryNearTimestamp(
+  slug: string,
+  timestampMs: number,
+  toleranceMs = 5000
+): AuditEntry | null {
+  const db = getDb();
+  const lo = timestampMs - toleranceMs;
+  const hi = timestampMs + toleranceMs;
+  const rows = db.prepare(`
+    SELECT * FROM audit_log
+    WHERE slug = ? AND timestamp BETWEEN ? AND ?
+    ORDER BY ABS(timestamp - ?) ASC
+    LIMIT 1
+  `).all(slug, lo, hi, timestampMs) as AuditEntry[];
+  return rows[0] ?? null;
 }
 
 /** Reset module-level DB handle (for tests that swap CMS_DB_PATH). */
