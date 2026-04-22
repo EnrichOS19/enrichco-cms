@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TemplateSwitcher } from "@/components/TemplateSwitcher";
+import { PublishStatusBar } from "@/components/PublishStatusBar";
 import { useToast } from "@/components/Toast";
 import {
   ArrowLeft,
@@ -153,6 +154,9 @@ export default function SalonEditorPage() {
   const [showGoLiveConfirm, setShowGoLiveConfirm] = useState(false);
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [uploadingLogo, setUploadingLogo] = useState(false);
+  // Incremented after any publish so <PublishStatusBar /> refetches immediately
+  // instead of waiting for its 10s poll.
+  const [statusRefreshTrigger, setStatusRefreshTrigger] = useState(0);
   const initialConfigRef = useRef<string>("");
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveRevisionRef = useRef(0);
@@ -207,6 +211,19 @@ export default function SalonEditorPage() {
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
   }, [dirty]);
+
+  // Bridge: PublishStatusBar emits a CustomEvent when its "Update preview"
+  // button succeeds/fails. Relay those to our toast so feedback is consistent
+  // without prop-drilling the useToast hook into the status bar.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { type?: string; message?: string } | undefined;
+      if (!detail?.message) return;
+      toast(detail.message, (detail.type as "success" | "error" | "info") ?? "info");
+    };
+    window.addEventListener("publish-status-toast", handler);
+    return () => window.removeEventListener("publish-status-toast", handler);
+  }, [toast]);
 
   // Keyboard shortcut: Cmd+S forces immediate save
   useEffect(() => {
@@ -356,6 +373,7 @@ export default function SalonEditorPage() {
       toast("Publish failed", "error");
     } finally {
       setPublishing(false);
+      setStatusRefreshTrigger((n) => n + 1);
     }
   };
 
@@ -427,6 +445,7 @@ export default function SalonEditorPage() {
       previewWin.close();
     } finally {
       setPreviewing(false);
+      setStatusRefreshTrigger((n) => n + 1);
     }
   };
 
@@ -885,6 +904,19 @@ export default function SalonEditorPage() {
                 {activeTab === "settings" && "Booking URL and social media links"}
               </p>
             </div>
+
+            {/* ===== PUBLISH STATUS BAR =====
+                 Always-visible indicator of where CMS content currently lives
+                 (Draft / Staging / Production). Polls /api/salon/[slug]/status
+                 every 10s so it reflects the moment a publish completes,
+                 without the user needing to refresh. */}
+            <PublishStatusBar
+              slug={slug}
+              canPublishProduction={canPublish}
+              pollTrigger={statusRefreshTrigger}
+              onRequestGoLive={handleGoLive}
+              onRequestStaging={handlePreview}
+            />
 
             {/* ===== INFO TAB ===== */}
             {activeTab === "info" && (
