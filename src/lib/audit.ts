@@ -103,6 +103,32 @@ export function getAllAuditLog(limit = 500): AuditEntry[] {
   `).all(limit) as AuditEntry[];
 }
 
+/**
+ * Find the audit entry for a slug that most likely corresponds to a given
+ * backup timestamp. Matches within +/- toleranceMs and returns the closest
+ * entry by absolute time delta, or null if none.
+ *
+ * Default tolerance is 5 seconds — the save → backup write → audit log insert
+ * happen in the same request so they're usually within tens of milliseconds,
+ * but disk + db latency can push that out a bit under load.
+ */
+export function findAuditEntryNearTimestamp(
+  slug: string,
+  timestampMs: number,
+  toleranceMs = 5000
+): AuditEntry | null {
+  const db = getDb();
+  const lo = timestampMs - toleranceMs;
+  const hi = timestampMs + toleranceMs;
+  const rows = db.prepare(`
+    SELECT * FROM audit_log
+    WHERE slug = ? AND timestamp BETWEEN ? AND ?
+    ORDER BY ABS(timestamp - ?) ASC
+    LIMIT 1
+  `).all(slug, lo, hi, timestampMs) as AuditEntry[];
+  return rows[0] ?? null;
+}
+
 /** Reset module-level DB handle (for tests that swap CMS_DB_PATH). */
 export function resetDb(): void {
   if (_db) {

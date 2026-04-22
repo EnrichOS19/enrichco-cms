@@ -36,6 +36,9 @@ import {
   FileText,
   Search,
   Eye,
+  History,
+  RotateCcw,
+  X,
 } from "lucide-react";
 import {
   shouldShowTab,
@@ -117,7 +120,7 @@ interface SalonConfig {
   [key: string]: unknown;
 }
 
-type TabId = "info" | "hours" | "services" | "gallery" | "design" | "about" | "blog" | "seo" | "settings";
+type TabId = "info" | "hours" | "services" | "gallery" | "design" | "about" | "blog" | "seo" | "history" | "settings";
 
 const TABS: { id: TabId; label: string; icon: typeof ClipboardList }[] = [
   { id: "info", label: "Info", icon: ClipboardList },
@@ -128,6 +131,7 @@ const TABS: { id: TabId; label: string; icon: typeof ClipboardList }[] = [
   { id: "about", label: "About", icon: FileText },
   { id: "blog", label: "Blog", icon: FileText },
   { id: "seo", label: "SEO", icon: Search },
+  { id: "history", label: "History", icon: History },
   { id: "settings", label: "Settings", icon: Settings },
 ];
 
@@ -901,6 +905,7 @@ export default function SalonEditorPage() {
                 {activeTab === "about" && "Tell visitors about your salon"}
                 {activeTab === "blog" && "Create and manage blog posts"}
                 {activeTab === "seo" && "Search engine optimization and social sharing"}
+                {activeTab === "history" && "Review and restore past versions of this salon's content"}
                 {activeTab === "settings" && "Booking URL and social media links"}
               </p>
             </div>
@@ -1893,6 +1898,21 @@ export default function SalonEditorPage() {
               </div>
             )}
 
+            {/* ===== HISTORY TAB ===== */}
+            {activeTab === "history" && (
+              <RevisionHistoryPanel
+                slug={slug}
+                currentConfig={config as unknown as Record<string, unknown>}
+                onRestored={(restored) => {
+                  setConfig(restored as unknown as SalonConfig);
+                  initialConfigRef.current = JSON.stringify(restored);
+                  setDirty(false);
+                  setSaveStatus("saved");
+                  toast("Revision restored. Saved as a new revision so you can undo.", "success");
+                }}
+              />
+            )}
+
             {/* ===== SETTINGS TAB ===== */}
             {activeTab === "settings" && shouldShowTab("settings", userRole) && (
               <div className="space-y-8">
@@ -2090,4 +2110,335 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
       {children}
     </div>
   );
+}
+
+/* ===== REVISION HISTORY PANEL ===== */
+
+interface RevisionRow {
+  id: string;
+  timestamp: string;
+  fileBytes: number;
+  author: string | null;
+  action: string | null;
+  changedFields: string[] | null;
+}
+
+const INITIAL_ROWS = 50;
+
+function RevisionHistoryPanel({
+  slug,
+  currentConfig,
+  onRestored,
+}: {
+  slug: string;
+  currentConfig: Record<string, unknown>;
+  onRestored: (restored: Record<string, unknown>) => void;
+}) {
+  const [revisions, setRevisions] = useState<RevisionRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [showAll, setShowAll] = useState(false);
+  const [viewRevision, setViewRevision] = useState<RevisionRow | null>(null);
+  const [viewContent, setViewContent] = useState<Record<string, unknown> | null>(null);
+  const [viewLoading, setViewLoading] = useState(false);
+  const [restoreTarget, setRestoreTarget] = useState<RevisionRow | null>(null);
+  const [restoring, setRestoring] = useState(false);
+
+  const loadRevisions = useCallback(async () => {
+    setError(null);
+    try {
+      const res = await fetch(`/api/salon/${slug}/revisions`);
+      if (!res.ok) {
+        setError("Failed to load revisions");
+        return;
+      }
+      const data = await res.json();
+      setRevisions(data.revisions ?? []);
+    } catch {
+      setError("Failed to load revisions");
+    }
+  }, [slug]);
+
+  useEffect(() => {
+    void loadRevisions();
+  }, [loadRevisions]);
+
+  const openViewModal = async (r: RevisionRow) => {
+    setViewRevision(r);
+    setViewContent(null);
+    setViewLoading(true);
+    try {
+      const res = await fetch(`/api/salon/${slug}/revisions/${encodeURIComponent(r.id)}`);
+      if (!res.ok) {
+        setError("Failed to load revision content");
+        setViewRevision(null);
+        return;
+      }
+      setViewContent(await res.json());
+    } catch {
+      setError("Failed to load revision content");
+      setViewRevision(null);
+    } finally {
+      setViewLoading(false);
+    }
+  };
+
+  const closeViewModal = () => {
+    setViewRevision(null);
+    setViewContent(null);
+  };
+
+  const confirmRestore = async () => {
+    if (!restoreTarget || restoring) return;
+    setRestoring(true);
+    try {
+      const res = await fetch(
+        `/api/salon/${slug}/revisions/${encodeURIComponent(restoreTarget.id)}/restore`,
+        { method: "POST" }
+      );
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(body?.error || "Restore failed");
+        setRestoreTarget(null);
+        return;
+      }
+      // Fetch new live salon.json so the editor reflects the restored state.
+      const refreshed = await fetch(`/api/salon/${slug}`).then((r) => (r.ok ? r.json() : null));
+      if (refreshed) onRestored(refreshed);
+      setRestoreTarget(null);
+      void loadRevisions();
+    } catch {
+      setError("Restore failed");
+      setRestoreTarget(null);
+    } finally {
+      setRestoring(false);
+    }
+  };
+
+  if (error && !revisions) {
+    return (
+      <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+        {error} — <button onClick={loadRevisions} className="underline">retry</button>
+      </div>
+    );
+  }
+  if (!revisions) {
+    return <div className="text-xs text-muted-foreground">Loading history…</div>;
+  }
+  if (revisions.length === 0) {
+    return (
+      <div className="rounded-md border border-border/60 bg-muted/10 p-4 text-xs text-muted-foreground">
+        No revisions yet. Backups are created automatically every time you save.
+      </div>
+    );
+  }
+
+  const visible = showAll ? revisions : revisions.slice(0, INITIAL_ROWS);
+
+  return (
+    <div className="space-y-3">
+      {error && (
+        <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive flex items-center justify-between">
+          <span>{error}</span>
+          <button onClick={() => setError(null)} className="underline">dismiss</button>
+        </div>
+      )}
+      <ul className="space-y-2">
+        {visible.map((r) => (
+          <li
+            key={r.id}
+            className="rounded-lg border border-border/60 bg-card/30 p-3 flex items-start gap-3"
+          >
+            <History className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-medium">{formatRevisionTimestamp(r.timestamp)}</span>
+                {r.action === "restore" && (
+                  <Badge variant="outline" className="text-[10px] bg-blue-500/15 text-blue-400 border-blue-500/25">
+                    Restore
+                  </Badge>
+                )}
+              </div>
+              {r.author && <div className="text-[11px] text-muted-foreground mt-0.5 truncate">{r.author}</div>}
+              {r.changedFields && r.changedFields.length > 0 && (
+                <div className="text-[11px] text-muted-foreground mt-0.5">
+                  Changed: {r.changedFields.slice(0, 6).join(", ")}{r.changedFields.length > 6 ? ` +${r.changedFields.length - 6}` : ""}
+                </div>
+              )}
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <Button size="sm" variant="outline" onClick={() => openViewModal(r)} className="gap-1 h-7 text-xs">
+                <Eye className="h-3 w-3" /> View
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setRestoreTarget(r)} className="gap-1 h-7 text-xs">
+                <RotateCcw className="h-3 w-3" /> Restore
+              </Button>
+            </div>
+          </li>
+        ))}
+      </ul>
+      {revisions.length > INITIAL_ROWS && !showAll && (
+        <button
+          onClick={() => setShowAll(true)}
+          className="text-xs text-muted-foreground hover:text-foreground underline"
+        >
+          Show older ({revisions.length - INITIAL_ROWS} more)
+        </button>
+      )}
+
+      {viewRevision && (
+        <RevisionDiffModal
+          revision={viewRevision}
+          loading={viewLoading}
+          oldContent={viewContent}
+          currentContent={currentConfig}
+          onClose={closeViewModal}
+        />
+      )}
+
+      {restoreTarget && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center px-4">
+          <div className="bg-card border border-border/60 rounded-xl p-6 max-w-md w-full shadow-xl">
+            <h3 className="text-lg font-semibold text-foreground mb-2">Restore to this revision?</h3>
+            <p className="text-sm text-muted-foreground mb-1">
+              {formatRevisionTimestamp(restoreTarget.timestamp)} {restoreTarget.author ? `by ${restoreTarget.author}` : ""}
+            </p>
+            <p className="text-xs text-muted-foreground mb-6">
+              Your current draft will be saved as a new revision so you can undo this.
+            </p>
+            <div className="flex items-center justify-end gap-3">
+              <Button variant="outline" size="sm" onClick={() => setRestoreTarget(null)} disabled={restoring}>Cancel</Button>
+              <Button size="sm" onClick={confirmRestore} disabled={restoring} className="gap-2">
+                {restoring ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+                {restoring ? "Restoring..." : "Restore"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function formatRevisionTimestamp(iso: string): string {
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return iso;
+  // Compact UTC format: YYYY-MM-DD HH:MM UTC
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())} UTC`;
+}
+
+function RevisionDiffModal({
+  revision,
+  loading,
+  oldContent,
+  currentContent,
+  onClose,
+}: {
+  revision: RevisionRow;
+  loading: boolean;
+  oldContent: Record<string, unknown> | null;
+  currentContent: Record<string, unknown>;
+  onClose: () => void;
+}) {
+  const rows = oldContent ? diffRows(oldContent, currentContent) : [];
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center px-4">
+      <div className="bg-card border border-border/60 rounded-xl max-w-5xl w-full max-h-[85vh] flex flex-col shadow-xl">
+        <div className="flex items-center justify-between border-b border-border/60 px-4 py-3">
+          <div>
+            <h3 className="text-sm font-semibold">Revision {formatRevisionTimestamp(revision.timestamp)}</h3>
+            <p className="text-[11px] text-muted-foreground mt-0.5">
+              Comparing this revision (left) to your current draft (right)
+            </p>
+          </div>
+          <button onClick={onClose} className="p-1 rounded hover:bg-muted/50" aria-label="Close">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="flex-1 overflow-auto p-4 text-xs font-mono">
+          {loading && <div className="text-muted-foreground">Loading…</div>}
+          {!loading && oldContent && (
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <div className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground">This revision</div>
+                <div className="rounded-md border border-border/60 bg-background/50 p-2 space-y-0.5">
+                  {rows.map((row, i) => (
+                    <div
+                      key={`l-${i}`}
+                      className={
+                        row.kind === "remove"
+                          ? "bg-red-500/10 text-red-300 rounded px-1"
+                          : row.kind === "change"
+                          ? "bg-amber-500/10 text-amber-200 rounded px-1"
+                          : row.kind === "add"
+                          ? "text-muted-foreground/30 px-1"
+                          : "text-muted-foreground px-1"
+                      }
+                    >
+                      <span className="text-muted-foreground/50 mr-2">{row.key}:</span>
+                      <span className="break-all">{row.kind === "add" ? "—" : jsonShort(row.oldVal)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground">Current draft</div>
+                <div className="rounded-md border border-border/60 bg-background/50 p-2 space-y-0.5">
+                  {rows.map((row, i) => (
+                    <div
+                      key={`r-${i}`}
+                      className={
+                        row.kind === "add"
+                          ? "bg-green-500/10 text-green-300 rounded px-1"
+                          : row.kind === "change"
+                          ? "bg-amber-500/10 text-amber-200 rounded px-1"
+                          : row.kind === "remove"
+                          ? "text-muted-foreground/30 px-1"
+                          : "text-muted-foreground px-1"
+                      }
+                    >
+                      <span className="text-muted-foreground/50 mr-2">{row.key}:</span>
+                      <span className="break-all">{row.kind === "remove" ? "—" : jsonShort(row.newVal)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+          {!loading && rows.length === 0 && oldContent && (
+            <div className="text-muted-foreground">No differences.</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type DiffKind = "same" | "add" | "remove" | "change";
+interface DiffRow { key: string; kind: DiffKind; oldVal: unknown; newVal: unknown }
+
+function diffRows(oldObj: Record<string, unknown>, newObj: Record<string, unknown>): DiffRow[] {
+  const keys = Array.from(new Set([...Object.keys(oldObj), ...Object.keys(newObj)])).sort();
+  const rows: DiffRow[] = [];
+  for (const k of keys) {
+    const inOld = Object.prototype.hasOwnProperty.call(oldObj, k);
+    const inNew = Object.prototype.hasOwnProperty.call(newObj, k);
+    const oldVal = oldObj[k];
+    const newVal = newObj[k];
+    let kind: DiffKind;
+    if (inOld && !inNew) kind = "remove";
+    else if (!inOld && inNew) kind = "add";
+    else if (JSON.stringify(oldVal) !== JSON.stringify(newVal)) kind = "change";
+    else kind = "same";
+    rows.push({ key: k, kind, oldVal, newVal });
+  }
+  return rows;
+}
+
+function jsonShort(val: unknown): string {
+  if (val === undefined) return "undefined";
+  const s = JSON.stringify(val);
+  if (s === undefined) return String(val);
+  if (s.length > 400) return s.slice(0, 400) + "…";
+  return s;
 }
