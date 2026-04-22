@@ -278,6 +278,34 @@ describe("POST /api/salon/[slug]/revisions/[timestamp]/restore", () => {
     expect(live.domain).toBeUndefined();
   });
 
+  it("two simultaneous restore calls both succeed with distinct pre-restore backup ids", async () => {
+    writeBackup("2026-04-21T18-42-00-000Z", { ...VALID_CONFIG, name: "A" });
+    writeBackup("2026-04-21T18-43-00-000Z", { ...VALID_CONFIG, name: "B" });
+
+    const [resA, resB] = await Promise.all([
+      restorePOST(
+        makePost(`http://x/api/salon/${SLUG}/revisions/2026-04-21T18-42-00-000Z/restore`),
+        { params: Promise.resolve({ slug: SLUG, timestamp: "2026-04-21T18-42-00-000Z" }) }
+      ),
+      restorePOST(
+        makePost(`http://x/api/salon/${SLUG}/revisions/2026-04-21T18-43-00-000Z/restore`),
+        { params: Promise.resolve({ slug: SLUG, timestamp: "2026-04-21T18-43-00-000Z" }) }
+      ),
+    ]);
+    expect(resA.status).toBe(200);
+    expect(resB.status).toBe(200);
+    const bodyA = await resA.json();
+    const bodyB = await resB.json();
+    expect(bodyA.backupId).not.toBe(bodyB.backupId);
+    expect(bodyA.backupId).toBeTruthy();
+    expect(bodyB.backupId).toBeTruthy();
+
+    // Two distinct pre-restore undo backups should exist on disk.
+    const configDir = path.join(tempDir, `${SLUG}-website`, "config");
+    const preRestores = fs.readdirSync(configDir).filter((f) => f.startsWith("salon.json.bak.pre-restore-"));
+    expect(preRestores.length).toBe(2);
+  });
+
   it("rejects path traversal on restore", async () => {
     const res = await restorePOST(
       makePost(`http://x/api/salon/${SLUG}/revisions/..%2F..%2Fevil/restore`),

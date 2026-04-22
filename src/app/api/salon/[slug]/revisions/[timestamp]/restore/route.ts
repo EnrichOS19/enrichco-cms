@@ -63,7 +63,7 @@ export async function POST(
     }
   }
 
-  const result = restoreSalonConfigWithUndo(slug, timestamp);
+  const result = await restoreSalonConfigWithUndo(slug, timestamp);
   if (!result) {
     return NextResponse.json({ error: "Revision not found" }, { status: 404 });
   }

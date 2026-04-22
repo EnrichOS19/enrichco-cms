@@ -253,36 +253,69 @@ export function readSalonConfigBackup(slug: string, id: string): { content: unkn
   }
 }
 
+// Per-salon in-process lock to serialize concurrent restores. Two simultaneous
+// restore calls on the same slug would otherwise race: both write pre-restore
+// backups with the same millisecond timestamp (id collision → one clobbers the
+// other's undo point) and the second copyFileSync wins, so the audit log
+// reports two successes for what is effectively a single final state.
+const _restoreLocks = new Map<string, Promise<unknown>>();
+
+async function withRestoreLock<T>(slug: string, fn: () => T): Promise<T> {
+  const prev = _restoreLocks.get(slug) ?? Promise.resolve();
+  let resolveNext!: () => void;
+  const next = new Promise<void>((r) => { resolveNext = r; });
+  const tail = prev.then(() => next);
+  _restoreLocks.set(slug, tail);
+  try {
+    await prev;
+    return fn();
+  } finally {
+    resolveNext();
+    // If no newer waiter has overwritten the map entry, drop it so the map
+    // doesn't accumulate settled promises for every salon ever restored.
+    if (_restoreLocks.get(slug) === tail) _restoreLocks.delete(slug);
+  }
+}
+
 /**
  * Restore salon.json to the content of a specific backup, preserving undo:
  * writes the current salon.json to a fresh `pre-restore-<ts>` backup first,
  * then copies the named backup over salon.json.
  *
+ * Concurrent restores on the same salon are serialized via a per-slug in-process
+ * lock — this does not protect against multiple CMS instances, but in the
+ * current single-Node deployment it prevents pre-restore id collisions and
+ * interleaved copyFileSync calls.
+ *
  * Returns the id of the pre-restore backup on success (so the caller can
  * show an "undo" affordance), or null on failure.
  */
-export function restoreSalonConfigWithUndo(slug: string, id: string): { preRestoreId: string } | null {
-  const dirName = findSalonDir(slug);
-  if (!dirName) return null;
-  const configDir = path.join(sitesDir(), dirName, "config");
-  const configPath = path.join(configDir, "salon.json");
+export async function restoreSalonConfigWithUndo(slug: string, id: string): Promise<{ preRestoreId: string } | null> {
+  return withRestoreLock(slug, (): { preRestoreId: string } | null => {
+    const dirName = findSalonDir(slug);
+    if (!dirName) return null;
+    const configDir = path.join(sitesDir(), dirName, "config");
+    const configPath = path.join(configDir, "salon.json");
 
-  const backupName = `salon.json.bak.${id}`;
-  const resolvedBackup = path.resolve(configDir, backupName);
-  if (!resolvedBackup.startsWith(path.resolve(configDir) + path.sep)) return null;
-  if (!fs.existsSync(resolvedBackup)) return null;
+    const backupName = `salon.json.bak.${id}`;
+    const resolvedBackup = path.resolve(configDir, backupName);
+    if (!resolvedBackup.startsWith(path.resolve(configDir) + path.sep)) return null;
+    if (!fs.existsSync(resolvedBackup)) return null;
 
-  try {
-    // Snapshot current salon.json as an undo point before overwriting.
-    let preRestoreId = "";
-    if (fs.existsSync(configPath)) {
-      const ts = new Date().toISOString().replace(/[:.]/g, "-");
-      preRestoreId = `pre-restore-${ts}`;
-      fs.copyFileSync(configPath, path.join(configDir, `salon.json.bak.${preRestoreId}`));
+    try {
+      let preRestoreId = "";
+      if (fs.existsSync(configPath)) {
+        // Include a random suffix so two restores that arrive in the same
+        // millisecond (locked or not) still produce unique undo-backup ids.
+        const ts = new Date().toISOString().replace(/[:.]/g, "-");
+        const rand = Math.random().toString(36).slice(2, 8);
+        preRestoreId = `pre-restore-${ts}-${rand}`;
+        fs.copyFileSync(configPath, path.join(configDir, `salon.json.bak.${preRestoreId}`));
+      }
+      fs.copyFileSync(resolvedBackup, configPath);
+      return { preRestoreId };
+    } catch {
+      return null;
     }
-    fs.copyFileSync(resolvedBackup, configPath);
-    return { preRestoreId };
-  } catch {
-    return null;
-  }
+  });
 }
