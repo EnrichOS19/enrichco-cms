@@ -64,6 +64,15 @@ async function runRebuildJob(slugs: string[], jobId: string, dryRun: boolean) {
       const domain = config?.domain;
       if (!domain) throw new Error("No production domain configured");
 
+      // externalProd guard (parity with publish route): never overwrite a
+      // salon whose production is hosted outside CMS, even if it slipped
+      // into an explicit slug list from a superadmin.
+      if (config?.externalProd === true) {
+        status.failed++;
+        status.results.push({ slug, ok: false, error: "Skipped: production hosted externally (externalProd=true)" });
+        continue;
+      }
+
       const result = await buildAndDeploy(siteDir, domain, slug, dryRun);
 
       // Post-deploy live-URL verification (skipped for dry runs — no deploy happened).
@@ -128,11 +137,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "No valid slugs after filtering" }, { status: 400 });
     }
   } else {
-    // Default: all production sites with a configured domain
+    // Default: all production sites with a configured domain.
+    // externalProd salons are excluded — their production site lives outside
+    // CMS, so deploy would either fail (no access to upstream) or clobber
+    // the external host if its IP is reachable.
     const productionSlugs: string[] = [];
     for (const s of getAllSalons()) {
       const config = getSalonConfig(s.slug)?.config;
-      if (config?.siteStatus === "production" && config?.domain) {
+      if (
+        config?.siteStatus === "production" &&
+        config?.domain &&
+        config?.externalProd !== true
+      ) {
         productionSlugs.push(s.slug);
       }
     }

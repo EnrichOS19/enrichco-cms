@@ -84,7 +84,12 @@ export default function AdminOwnersPage() {
   // ── IMS lookup state ────────────────────────────────────────────────────────
   const [imsLooking, setImsLooking] = useState(false);
   const [imsResult, setImsResult] = useState<ImsLookupResult | null>(null);
+  // Tracks the email string the current imsResult corresponds to, so stale
+  // network responses (e.g. user types `a@b.com` then immediately `c@d.com`
+  // and the first request lands last) don't apply mismatched data.
+  const [imsResultForEmail, setImsResultForEmail] = useState<string>("");
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const imsRequestIdRef = useRef(0);
 
   // ── revoke state ────────────────────────────────────────────────────────────
   const [revoking, setRevoking] = useState<string | null>(null); // "email::slug"
@@ -134,28 +139,38 @@ export default function AdminOwnersPage() {
     const trimmed = emailVal.trim();
     if (!trimmed || !trimmed.includes("@")) {
       setImsResult(null);
+      setImsResultForEmail("");
       return;
     }
+    // Monotonic request ID — drop responses whose request was superseded by a
+    // later one so slow/out-of-order responses can't overwrite fresh results
+    // or auto-select the wrong salon for the current email.
+    const reqId = ++imsRequestIdRef.current;
     setImsLooking(true);
     try {
       const res = await fetch(`/api/admin/ims-lookup?email=${encodeURIComponent(trimmed)}`);
       const data = await res.json() as ImsLookupResult;
+      if (reqId !== imsRequestIdRef.current) return; // superseded — drop
       setImsResult(data);
+      setImsResultForEmail(trimmed);
       // Auto-select the matching salon when IMS provided one. Admin can still
       // override via the dropdown — this is a suggestion, not a lock.
       if (data.found && data.suggestedSlug) {
         setSelectedSlug(data.suggestedSlug);
       }
     } catch {
+      if (reqId !== imsRequestIdRef.current) return;
       setImsResult({ found: false, warning: "IMS lookup failed" });
+      setImsResultForEmail(trimmed);
     } finally {
-      setImsLooking(false);
+      if (reqId === imsRequestIdRef.current) setImsLooking(false);
     }
   }, []);
 
   function handleEmailChange(val: string) {
     setEmail(val);
     setImsResult(null);
+    setImsResultForEmail("");
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => doImsLookup(val), 500);
   }
@@ -169,8 +184,14 @@ export default function AdminOwnersPage() {
     setSubmitResult(null);
     try {
       const body: Record<string, unknown> = { email: email.trim(), slug: selectedSlug };
-      // Pass IMS storeID through if we found one, so Agent A's DB can record it
-      if (imsResult?.found && imsResult.storeID) {
+      // Pass IMS storeID through if we found one — but only if the current
+      // imsResult actually corresponds to the email about to be submitted
+      // (protects against stale responses where email changed after lookup).
+      if (
+        imsResult?.found &&
+        imsResult.storeID &&
+        imsResultForEmail === email.trim()
+      ) {
         body.ims_store_id = String(imsResult.storeID);
       }
       const res = await fetch("/api/admin/salon-access", {
@@ -310,8 +331,8 @@ export default function AdminOwnersPage() {
               </div>
             </div>
 
-            {/* IMS lookup result */}
-            {imsResult && !imsLooking && (
+            {/* IMS lookup result — only show when it matches the current email */}
+            {imsResult && !imsLooking && imsResultForEmail === email.trim() && (
               <div className={`flex items-start gap-2 text-xs rounded-lg px-3 py-2.5 ${
                 imsResult.found
                   ? "bg-green-500/10 text-green-400 border border-green-500/20"
