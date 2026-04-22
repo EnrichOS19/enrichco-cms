@@ -19,6 +19,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth";
+import { findSlugByRvcNo } from "@/lib/salons";
 
 export const dynamic = "force-dynamic";
 
@@ -150,10 +151,19 @@ export async function GET(request: NextRequest) {
   }
 
   const name = [match.firstName, match.lastName].filter(Boolean).join(" ");
+
+  // Map IMS storeID → CMS salon slug by matching salon.json.rvcNo. Only ~11
+  // of 127 salons have rvcNo populated today; rest return null (no CMS match),
+  // which the UI surfaces so the admin still picks a salon manually.
+  const suggestedSlug = typeof match.storeID === "number"
+    ? findSlugByRvcNo(match.storeID)
+    : null;
+
   return NextResponse.json({
     found: true,
     name: name || null,
     businessName: match.businessName ?? null,
     storeID: match.storeID ?? null,
+    suggestedSlug,
   });
 }

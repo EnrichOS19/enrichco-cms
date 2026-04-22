@@ -17,6 +17,7 @@ const OWNER_PROTECTED_FIELDS = [
   "domainOwnership",
   "websiteManager",
   "currentTemplate",
+  "externalProd",
 ] as const;
 
 export async function GET(

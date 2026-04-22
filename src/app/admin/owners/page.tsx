@@ -51,6 +51,7 @@ interface ImsLookupResult {
   name?: string;
   businessName?: string;
   storeID?: number;
+  suggestedSlug?: string | null;
   warning?: string;
 }
 
@@ -140,6 +141,11 @@ export default function AdminOwnersPage() {
       const res = await fetch(`/api/admin/ims-lookup?email=${encodeURIComponent(trimmed)}`);
       const data = await res.json() as ImsLookupResult;
       setImsResult(data);
+      // Auto-select the matching salon when IMS provided one. Admin can still
+      // override via the dropdown — this is a suggestion, not a lock.
+      if (data.found && data.suggestedSlug) {
+        setSelectedSlug(data.suggestedSlug);
+      }
     } catch {
       setImsResult({ found: false, warning: "IMS lookup failed" });
     } finally {
@@ -323,6 +329,13 @@ export default function AdminOwnersPage() {
                         {imsResult.businessName ? ` — ${imsResult.businessName}` : ""}
                       </strong>
                       {imsResult.storeID ? ` (Store #${imsResult.storeID})` : ""}
+                      {imsResult.storeID != null && (
+                        <span className="block text-[11px] text-muted-foreground mt-1">
+                          {imsResult.suggestedSlug
+                            ? <>Suggested salon: <strong className="text-foreground">{imsResult.suggestedSlug}</strong> (auto-selected)</>
+                            : "No CMS salon has a matching rvcNo yet — select manually."}
+                        </span>
+                      )}
                     </span>
                   </>
                 ) : imsResult.warning ? (

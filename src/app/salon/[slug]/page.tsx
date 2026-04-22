@@ -114,6 +114,7 @@ interface SalonConfig {
   domain?: string;
   stagingDomain?: string;
   siteStatus?: "staging" | "production";
+  externalProd?: boolean;
   domainOwnership?: "enrichco" | "client";
   websiteManager?: "ai-team" | "marketing-team";
   currentTemplate?: string;
@@ -142,6 +143,7 @@ export default function SalonEditorPage() {
 
   const [config, setConfig] = useState<SalonConfig | null>(null);
   const isProduction = (config?.siteStatus ?? "staging") === "production";
+  const isExternalProd = config?.externalProd === true;
   const [userRole, setUserRole] = useState<string | null>(null);
   const canPublish = canPublishToProduction(userRole);
   const canSwitchTpl = canSwitchTemplate(userRole);
@@ -338,6 +340,15 @@ export default function SalonEditorPage() {
   // ── Go Live: flush save → confirm → build → deploy to production ────
   const handleGoLive = async () => {
     if (!config || publishing) return;
+
+    // externalProd salons are hosted outside CMS — block at the entry point
+    // so neither the status-bar "Publish live" nor the footer "Go Live" can
+    // initiate a production deploy. Backend guards this too (422), but
+    // short-circuiting here avoids a wasted save-flush + toast flicker.
+    if (isExternalProd) {
+      toast("Production is hosted externally — CMS cannot deploy to it.", "error");
+      return;
+    }
 
     // 1. Flush save first
     const saved = await flushSave();
@@ -889,6 +900,17 @@ export default function SalonEditorPage() {
               <div className="mb-4 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center gap-2">
                 <span className="text-amber-400 text-xs font-medium">{validationWarning}</span>
                 <button onClick={() => setValidationWarning(null)} className="text-amber-400/60 hover:text-amber-400 ml-auto text-xs">dismiss</button>
+              </div>
+            )}
+            {/* External-prod banner: CMS doesn't own this salon's live site. */}
+            {isExternalProd && (
+              <div className="mb-4 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                <p className="text-amber-400 text-xs font-medium">
+                  External production hosting
+                </p>
+                <p className="text-amber-300/80 text-xs mt-1">
+                  This salon&apos;s production site is hosted externally. CMS edits save to the staging target only; production updates happen outside this system.
+                </p>
               </div>
             )}
             {/* Tab header */}
@@ -2075,7 +2097,8 @@ export default function SalonEditorPage() {
               <Button
                 size="sm"
                 onClick={handleGoLive}
-                disabled={publishing || previewing || saveStatus === "error"}
+                disabled={publishing || previewing || saveStatus === "error" || isExternalProd}
+                title={isExternalProd ? "Production is hosted externally — CMS cannot deploy to it" : undefined}
                 className="gap-2 bg-green-600 hover:bg-green-700"
               >
                 {publishing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Rocket className="h-3.5 w-3.5" />}
