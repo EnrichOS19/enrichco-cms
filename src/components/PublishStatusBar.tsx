@@ -11,8 +11,8 @@
  *   red    → failed_fetch (site unreachable — surface to operator)
  *
  * Actions:
- *   Staging yellow → "Update preview" → POST /publish?target=staging
- *   Production yellow → callback to parent's Go Live confirm flow
+ *   Preview yellow → "Update preview" → POST /publish?target=preview
+ *   Live yellow → callback to parent's Go Live confirm flow
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -146,7 +146,7 @@ export function PublishStatusBar({
       // Fallback (no parent handler): direct publish. Still useful in isolated
       // rendering (tests, standalone docs) but emits a warning in the event
       // payload so the parent can surface it.
-      const res = await fetch(`/api/salon/${slug}/publish?target=staging`, { method: "POST" });
+      const res = await fetch(`/api/salon/${slug}/publish?target=preview`, { method: "POST" });
       await fetchStatus();
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -208,9 +208,9 @@ export function PublishStatusBar({
           secondary={`hash:${shortHash(draft.hash)}`}
         />
 
-        {/* Staging row */}
+        {/* Preview row */}
         <Row
-          label="Staging"
+          label="Preview"
           dot={dotClass(staging.state)}
           primary={
             staging.domain ? (
@@ -223,7 +223,7 @@ export function PublishStatusBar({
                 {staging.domain}
               </a>
             ) : (
-              "No staging domain set"
+              "No preview domain set"
             )
           }
           secondary={
@@ -250,9 +250,9 @@ export function PublishStatusBar({
           }
         />
 
-        {/* Production row */}
+        {/* Live row */}
         <Row
-          label="Production"
+          label="Live"
           dot={dotClass(production.state)}
           primary={
             production.domain ? (
@@ -265,7 +265,7 @@ export function PublishStatusBar({
                 {production.domain}
               </a>
             ) : (
-              "No production domain set"
+              "No live domain set"
             )
           }
           secondary={

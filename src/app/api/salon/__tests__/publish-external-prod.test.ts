@@ -25,10 +25,12 @@ vi.mock("@/lib/auth", async (importOriginal) => {
 });
 
 // ── publish lib mock — we don't want to shell out to real builds ─────────────
-const buildAndDeployMock = vi.fn();
+const buildSiteTarballMock = vi.fn();
+const deployTarballMock = vi.fn();
 const verifyLiveDeployMock = vi.fn();
 vi.mock("@/lib/publish", () => ({
-  buildAndDeploy: (...args: unknown[]) => buildAndDeployMock(...args),
+  buildSiteTarball: (...args: unknown[]) => buildSiteTarballMock(...args),
+  deployTarball: (...args: unknown[]) => deployTarballMock(...args),
   verifyLiveDeploy: (...args: unknown[]) => verifyLiveDeployMock(...args),
   publishLocks: new Set<string>(),
 }));
@@ -85,14 +87,17 @@ beforeEach(() => {
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "cms-extprod-"));
   process.env.SITES_DIR = tempDir;
   vi.mocked(requireSalonAccess).mockResolvedValue({ session: adminSession() } as unknown as Awaited<ReturnType<typeof requireSalonAccess>>);
-  // Default: build + verify succeed so the guard is the only blocker we can test.
-  buildAndDeployMock.mockResolvedValue({
-    domain: "whatever.example.com",
+  // Default: build + deploy + verify succeed so the guard is the only blocker we can test.
+  buildSiteTarballMock.mockResolvedValue({
+    tarPath: "/tmp/test.tar.gz",
     deployHash: "hash",
+    slug: SLUG,
     steps: [],
     stdout: "",
     stderr: "",
+    cleanup: vi.fn(),
   });
+  deployTarballMock.mockResolvedValue({ domain: "whatever.example.com", steps: [], warnings: [] });
   verifyLiveDeployMock.mockResolvedValue({ verified: true });
 });
 
@@ -104,40 +109,53 @@ afterEach(() => {
 // ── tests ───────────────────────────────────────────────────────────────────
 
 describe("POST /api/salon/[slug]/publish — externalProd guard", () => {
-  it("returns 422 on production publish when externalProd=true", async () => {
+  it("externalProd=true blocks live portion — target=live skips live deploy", async () => {
     writeConfig(CONFIG_PROD_EXTERNAL);
     const res = await publishPOST(
-      makePost(`http://x/api/salon/${SLUG}/publish`),
+      makePost(`http://x/api/salon/${SLUG}/publish?target=live`),
       { params: Promise.resolve({ slug: SLUG }) }
     );
-    expect(res.status).toBe(422);
+    // Preview still succeeds; live is skipped due to externalProd
+    expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.externalProd).toBe(true);
-    expect(body.error).toMatch(/hosted externally/i);
-    // buildAndDeploy must NOT be called when externalProd blocks
-    expect(buildAndDeployMock).not.toHaveBeenCalled();
+    expect(body.externalProdBlocked).toBe(true);
+    expect(body.live).toBeNull();
+    // buildSiteTarball IS called (preview still builds)
+    expect(buildSiteTarballMock).toHaveBeenCalled();
+    // deployTarball called once (preview only, not live)
+    expect(deployTarballMock).toHaveBeenCalledTimes(1);
+    expect(deployTarballMock).toHaveBeenCalledWith(
+      expect.any(String),
+      CONFIG_PROD_EXTERNAL.stagingDomain,
+      expect.any(String),
+      SLUG
+    );
   });
 
-  it("allows staging publish even when externalProd=true (target=staging override)", async () => {
+  it("target=preview (legacy target=staging) works even when externalProd=true", async () => {
     writeConfig(CONFIG_PROD_EXTERNAL);
     const res = await publishPOST(
       makePost(`http://x/api/salon/${SLUG}/publish?target=staging`),
       { params: Promise.resolve({ slug: SLUG }) }
     );
-    // externalProd guard only fires for production targets — staging should
-    // flow through to buildAndDeploy
-    expect(buildAndDeployMock).toHaveBeenCalled();
+    // target=staging is treated as preview — externalProd guard doesn't fire
+    expect(buildSiteTarballMock).toHaveBeenCalled();
+    expect(deployTarballMock).toHaveBeenCalledTimes(1);
     expect(res.status).toBe(200);
   });
 
-  it("does NOT block production publish when externalProd=false", async () => {
+  it("does NOT block live publish when externalProd=false", async () => {
     writeConfig({ ...CONFIG_PROD_EXTERNAL, externalProd: false });
     const res = await publishPOST(
-      makePost(`http://x/api/salon/${SLUG}/publish`),
+      makePost(`http://x/api/salon/${SLUG}/publish?target=live`),
       { params: Promise.resolve({ slug: SLUG }) }
     );
-    expect(buildAndDeployMock).toHaveBeenCalled();
+    expect(buildSiteTarballMock).toHaveBeenCalled();
+    // Both preview + live deployed
+    expect(deployTarballMock).toHaveBeenCalledTimes(2);
     expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.externalProdBlocked).toBeUndefined();
   });
 });
 

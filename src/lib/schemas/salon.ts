@@ -201,6 +201,11 @@ export const salonSchema = z.object({
   }).optional(),
   services: z.array(serviceCategorySchema).max(100).optional(),
   gallery: z.array(galleryImageSchema).max(200).optional(),
+  // AI-generated display-only fields added by the onboarding pipeline.
+  // Owners cannot edit these; admin/staff writes round-trip them unchanged.
+  reviews: z.array(z.unknown()).max(1000).optional(),
+  blog: z.array(z.unknown()).max(500).optional(),
+  config: z.record(z.string(), z.unknown()).optional(),
   domain: z.string().trim().max(253).regex(domainRegex, "Invalid domain format").optional().or(z.literal("")),
   stagingDomain: z.string().trim().max(253).regex(domainRegex, "Invalid staging domain format").optional().or(z.literal("")),
   siteStatus: z.enum(["staging", "production"]).optional(),
@@ -231,6 +236,9 @@ export const ownerSalonSchema = salonSchema
     domainOwnership: true,
     websiteManager: true,
     externalProd: true,
+    reviews: true,
+    blog: true,
+    config: true,
   })
   .strict();
 

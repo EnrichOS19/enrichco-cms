@@ -3,6 +3,7 @@ import { configEtag, getSalonConfig, saveSalonConfig } from "@/lib/salons";
 import { flattenZodErrors, salonSchema, ownerSalonSchema } from "@/lib/schemas/salon";
 import { requireSalonAccess } from "@/lib/auth";
 import { logEvent } from "@/lib/audit";
+import type { SalonConfig } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +19,9 @@ const OWNER_PROTECTED_FIELDS = [
   "websiteManager",
   "currentTemplate",
   "externalProd",
+  "reviews",
+  "blog",
+  "config",
 ] as const;
 
 export async function GET(
@@ -57,7 +61,6 @@ export async function PUT(
 
   const isOwner = session.role === "salon_owner";
 
-  let config: unknown;
   let parseResult: ReturnType<typeof salonSchema.safeParse>;
 
   if (isOwner) {
@@ -66,13 +69,19 @@ export async function PUT(
     for (const field of OWNER_PROTECTED_FIELDS) {
       delete stripped[field];
     }
+    // Strip any key not in ownerSalonSchema.shape so legacy top-level keys
+    // (nav, promotions, googleReviews, popup, theme, etc.) don't cause a
+    // strict-mode 400 on the 126 salons that still carry them.
+    // The owner simply can't write to those keys — they're silently ignored.
+    const allowedOwnerKeys = new Set(Object.keys(ownerSalonSchema.shape));
+    const filtered: Record<string, unknown> = Object.fromEntries(
+      Object.entries(stripped).filter(([k]) => allowedOwnerKeys.has(k))
+    );
     // Use strict schema — unknown keys are rejected (closes Codex's .passthrough hole)
-    parseResult = ownerSalonSchema.safeParse(stripped);
-    config = stripped;
+    parseResult = ownerSalonSchema.safeParse(filtered);
   } else {
     // Admin/staff: full schema with passthrough
     parseResult = salonSchema.safeParse(rawBody);
-    config = rawBody;
   }
 
   if (!parseResult.success) {
@@ -124,7 +133,22 @@ export async function PUT(
     }
   }
 
-  const success = saveSalonConfig(slug, parseResult.data);
+  // For owner writes, merge only the validated schema keys into the existing
+  // salon.json rather than replacing it wholesale. This preserves all legacy
+  // top-level keys (nav, promotions, googleReviews, popup, theme, etc.) that
+  // are not in ownerSalonSchema.shape, so they survive every owner save.
+  //
+  // For admin/staff writes, passthrough keeps legacy keys in parseResult.data
+  // already, so no merge is needed — a direct save is correct.
+  let savePayload: Record<string, unknown>;
+  if (isOwner) {
+    const onDisk = (oldConfig as Record<string, unknown>) ?? {};
+    savePayload = { ...onDisk, ...parseResult.data };
+  } else {
+    savePayload = parseResult.data as Record<string, unknown>;
+  }
+
+  const success = saveSalonConfig(slug, savePayload as SalonConfig);
   if (!success) {
     return NextResponse.json({ error: "Failed to save" }, { status: 500 });
   }
@@ -148,7 +172,8 @@ export async function PUT(
     diff: Object.keys(diff).length > 0 ? JSON.stringify(diff) : undefined,
   });
 
-  const newEtag = configEtag(parseResult.data);
+  // ETag must reflect what's actually on disk (merged payload for owner writes)
+  const newEtag = configEtag(savePayload as SalonConfig);
   return NextResponse.json({ ok: true, etag: newEtag }, {
     headers: { ETag: newEtag },
   });

@@ -171,16 +171,20 @@ describe("PUT /api/salon/[slug] — field allowlist", () => {
     expect(savedData.tagline).toBe("New tagline");
   });
 
-  it("owner PUT: Zod schema uses strict mode — unknown keys are rejected", async () => {
+  it("owner PUT: unknown keys are silently stripped before strict schema parse — save succeeds", async () => {
     vi.mocked(requireSalonAccess).mockResolvedValue({ session: makeSession("salon_owner") });
 
     const res = await PUT(
-      makePutRequest({ ...BASE_CONFIG, unknownAdminField: "injected" }),
+      makePutRequest({ ...BASE_CONFIG, unknownAdminField: "injected", nav: [{ label: "Home" }] }),
       { params: Promise.resolve({ slug: "ntv-beauty" }) }
     );
 
-    // With strict schema, unknown keys cause validation failure
-    expect(res.status).toBe(400);
+    // Unknown keys are stripped before parse — save succeeds instead of 400.
+    // The unknown key must NOT appear in the saved payload.
+    expect(res.status).toBe(200);
+    const savedData = vi.mocked(saveSalonConfig).mock.calls[0][1] as Record<string, unknown>;
+    expect(savedData.unknownAdminField).toBeUndefined();
+    expect(savedData.nav).toBeUndefined(); // nav is not in ownerSalonSchema.shape
   });
 });
 

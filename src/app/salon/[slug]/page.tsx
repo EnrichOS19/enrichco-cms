@@ -208,11 +208,12 @@ export default function SalonEditorPage() {
       .catch(() => {});
   }, [slug]);
 
-  // Unsaved changes warning
+  // Unsaved changes warning — fires only when dirty, Chrome requires returnValue
   useEffect(() => {
-    if (!dirty) return;
     const handler = (e: BeforeUnloadEvent) => {
+      if (!dirty) return;
       e.preventDefault();
+      e.returnValue = ''; // Chrome requires this
     };
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
@@ -366,7 +367,7 @@ export default function SalonEditorPage() {
     setPublishing(true);
     toast("Building and deploying to live...", "info");
     try {
-      const res = await fetch(`/api/salon/${slug}/publish`, { method: "POST" });
+      const res = await fetch(`/api/salon/${slug}/publish?target=live`, { method: "POST" });
       const data = await res.json();
       if (res.status === 502 && data?.verified === false) {
         // Build + deploy succeeded on our server, but the live URL is not
@@ -376,8 +377,20 @@ export default function SalonEditorPage() {
           `Publish did NOT reach live users (${data.reason}). ${data.hint ?? ""}`,
           "error"
         );
+      } else if (res.ok && data?.preview_ok === true && data?.live_ok === false) {
+        // Partial success: preview updated, going live threw an error (HIGH 2)
+        toast(
+          `Preview updated. Going live failed: ${data.live_error ?? "unknown error"}. Retry?`,
+          "warning"
+        );
       } else if (!res.ok) {
         toast(data.message || data.error || "Publish failed", "error");
+      } else if (res.ok && data?.warnings?.length > 0) {
+        // Published with permission/ownership warnings (HIGH 3)
+        toast(
+          `Live site updated (build ${data.deploy_hash}) — with warnings: ${data.warnings[0]}`,
+          "warning"
+        );
       } else {
         toast(
           `Live site updated — verified reachable (build ${data.deploy_hash})`,
@@ -793,12 +806,12 @@ export default function SalonEditorPage() {
             ) : (
               <span className="flex items-center gap-2 text-xs text-muted-foreground opacity-50">
                 <Globe className="h-3.5 w-3.5 shrink-0" />
-                <span className="truncate">{isProduction ? "No domain set" : "No staging domain set"}</span>
+                <span className="truncate">{isProduction ? "No domain set" : "No preview domain set"}</span>
               </span>
             )}
             <div className="mt-1.5">
               <Badge variant="outline" className={`text-[10px] ${isProduction ? "bg-green-500/15 text-green-400 border-green-500/25" : "bg-blue-500/15 text-blue-400 border-blue-500/25"}`}>
-                {isProduction ? "Production" : "Staging"}
+                {isProduction ? "Live" : "Preview"}
               </Badge>
             </div>
           </div>
@@ -857,11 +870,11 @@ export default function SalonEditorPage() {
                   <ExternalLink className="h-2.5 w-2.5 shrink-0" />
                 </a>
               ) : (
-                <span className="text-[10px] text-muted-foreground opacity-50">{isProduction ? "No domain" : "No staging domain"}</span>
+                <span className="text-[10px] text-muted-foreground opacity-50">{isProduction ? "No domain" : "No preview domain"}</span>
               )}
             </div>
             <Badge variant="outline" className={`text-[10px] shrink-0 ${isProduction ? "bg-green-500/15 text-green-400 border-green-500/25" : "bg-blue-500/15 text-blue-400 border-blue-500/25"}`}>
-              {isProduction ? "Prod" : "Staging"}
+              {isProduction ? "Live" : "Preview"}
             </Badge>
             {dirty && (
               <Badge variant="outline" className="bg-amber-500/15 text-amber-400 border-amber-500/25 text-[10px] shrink-0">
@@ -2077,7 +2090,7 @@ export default function SalonEditorPage() {
               <span className="text-muted-foreground/50">No changes</span>
             )}
             {dirty && saveStatus !== "saving" && (
-              <><Loader2 className="h-3 w-3 text-amber-400" /><span className="text-amber-400">Editing...</span></>
+              <><Loader2 className="h-3 w-3 text-amber-400" /><span className="text-amber-400">Unsaved changes</span></>
             )}
           </div>
 
@@ -2091,7 +2104,7 @@ export default function SalonEditorPage() {
               className="gap-2"
             >
               {previewing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Eye className="h-3.5 w-3.5" />}
-              {previewing ? "Building..." : "Publish to Staging"}
+              {previewing ? "Building..." : "Save & Preview"}
             </Button>
             {canPublish && (
               <Button
