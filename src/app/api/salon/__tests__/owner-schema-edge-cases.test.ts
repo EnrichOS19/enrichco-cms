@@ -393,7 +393,7 @@ describe("owner PUT — prototype-safety (Codex MEDIUM)", () => {
     // constructor can appear as a regular inherited property on any plain object —
     // what we're asserting is it wasn't SET to the attacker's value
     if (Object.prototype.hasOwnProperty.call(saved, "constructor")) {
-      expect((saved.constructor as Record<string, unknown>).prototype).not.toMatchObject({ pollute: "bad" });
+      expect((saved.constructor as unknown as Record<string, unknown>).prototype).not.toMatchObject({ pollute: "bad" });
     }
     expect(({} as Record<string, unknown>).pollute).toBeUndefined();
   });
