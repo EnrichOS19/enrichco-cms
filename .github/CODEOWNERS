@@ -1,0 +1,4 @@
+# CODEOWNERS for EnrichOS19/enrichco-cms
+# Keep ownership explicit so production, integration, and ops repos do not drift silently.
+
+* @EnrichOS19/core @EnrichOS19/dev-team
